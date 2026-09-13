@@ -7,6 +7,9 @@ import { createTransportWorkspaceRegistry, DEFAULT_GRAPH_LAYER_VISIBILITY, type 
 import { GISIngestionError, ingestGeoJSON } from "@/gis/ingest";
 import { DEFAULT_GIS_LAYER_VISIBILITY, type GISLayerGroup, type GISLayerVisibility } from "@/gis/map-registry";
 import type { GISDataset } from "@/gis/types";
+import { addPhysarumResultToRegistry } from "@/physarum/map-registry";
+import { runPhysarum } from "@/physarum/solver";
+import type { PhysarumState } from "@/physarum/types";
 import { addScenarioToRegistry } from "@/scenario/map-registry";
 import { prepareNetwork } from "@/scenario/prepare";
 import { createEmptyScenario, setEdgePenalty, setTerminal, toggleBlockedEdge } from "@/scenario/scenario";
@@ -30,6 +33,9 @@ export function MapWorkspace() {
   const [scenario, setScenario] = useState<AnalysisScenario>(() => createEmptyScenario());
   const [scenarioMode, setScenarioMode] = useState<ScenarioMode>(null);
   const [penaltyMultiplier, setPenaltyMultiplier] = useState(1.5);
+  const [physarumResult, setPhysarumResult] = useState<PhysarumState | null>(null);
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
+  const [selectedEdgeId, setSelectedEdgeId] = useState("");
   const commandId = useRef(0);
   const graphResult = useMemo(() => {
     try { return { graph: buildTransportGraph(dataset), error: null }; }
@@ -39,8 +45,9 @@ export function MapWorkspace() {
   const registry = useMemo(() => {
     if (!graphResult.graph) return null;
     const base = createTransportWorkspaceRegistry(dataset, graphResult.graph, visibility, graphVisibility);
-    return addScenarioToRegistry(base, graphResult.graph, scenario);
-  }, [dataset, graphResult.graph, graphVisibility, scenario, visibility]);
+    const withScenario = addScenarioToRegistry(base, graphResult.graph, scenario);
+    return addPhysarumResultToRegistry(withScenario, graphResult.graph, physarumResult);
+  }, [dataset, graphResult.graph, graphVisibility, physarumResult, scenario, visibility]);
 
   function command(value: CameraCommandInput) {
     commandId.current += 1;
@@ -60,6 +67,8 @@ export function MapWorkspace() {
       setGraphVisibility(DEFAULT_GRAPH_LAYER_VISIBILITY);
       setScenario(createEmptyScenario());
       setScenarioMode(null);
+      setPhysarumResult(null);
+      setSelectedEdgeId("");
       if (imported.bounds) command({ type: "fit-bounds", bounds: imported.bounds });
     } catch (error) {
       const message = error instanceof GISIngestionError ? error.message : error instanceof SyntaxError ? "The selected file is not valid JSON." : "The selected GeoJSON file could not be imported.";
@@ -68,10 +77,15 @@ export function MapWorkspace() {
   }
 
   function selectMapFeature(selection: MapFeatureSelection) {
-    if (scenarioMode === "source" && selection.kind === "node") setScenario((current) => setTerminal(current, "source", selection.id));
-    if (scenarioMode === "sink" && selection.kind === "node") setScenario((current) => setTerminal(current, "sink", selection.id));
-    if (scenarioMode === "block" && selection.kind === "edge") setScenario((current) => toggleBlockedEdge(current, selection.id));
-    if (scenarioMode === "penalty" && selection.kind === "edge") setScenario((current) => setEdgePenalty(current, selection.id, penaltyMultiplier));
+    if (scenarioMode === "source" && selection.kind === "node") updateScenario((current) => setTerminal(current, "source", selection.id));
+    if (scenarioMode === "sink" && selection.kind === "node") updateScenario((current) => setTerminal(current, "sink", selection.id));
+    if (scenarioMode === "block" && selection.kind === "edge") { setSelectedEdgeId(selection.id); updateScenario((current) => toggleBlockedEdge(current, selection.id)); }
+    if (scenarioMode === "penalty" && selection.kind === "edge") { setSelectedEdgeId(selection.id); updateScenario((current) => setEdgePenalty(current, selection.id, penaltyMultiplier)); }
+  }
+
+  function updateScenario(updater: (current: AnalysisScenario) => AnalysisScenario) {
+    setScenario(updater);
+    setPhysarumResult(null);
   }
 
   const source = scenario.terminals.find((terminal) => terminal.role === "source");
@@ -81,10 +95,11 @@ export function MapWorkspace() {
   return (
     <section className="map-workspace" aria-label="Physarum map workspace">
       {registry && <MapCanvas cameraCommand={cameraCommand} projection={projection} registry={registry} onFeatureSelect={selectMapFeature} />}
-      <aside className="map-panel" aria-label="GIS controls">
+      <aside className={`map-panel${panelCollapsed ? " is-collapsed" : ""}`} aria-label="GIS controls">
         <header className="panel-heading">
           <div><h1>Physarum Transport Model 2.0</h1><p>GIS ingestion foundation · EPSG:4326</p></div>
           <label className="import-button">Import GeoJSON<input aria-label="Import GeoJSON" type="file" accept=".geojson,.json,application/geo+json,application/json" onChange={importFile} /></label>
+          <button className="panel-collapse" type="button" aria-expanded={!panelCollapsed} onClick={() => setPanelCollapsed((current) => !current)}>{panelCollapsed ? "Show controls" : "Hide controls"}</button>
         </header>
         <div className="control-row" aria-label="Camera controls">
           <button className="control-button" type="button" aria-label="Zoom in" onClick={() => command({ type: "zoom-in" })}>+</button>
@@ -115,8 +130,9 @@ export function MapWorkspace() {
           <section className="scenario-section" aria-label="Scenario controls">
             <div className="scenario-heading"><strong>Scenario</strong><span className={prepared.validation.valid ? "status-valid" : "status-invalid"}>{prepared.validation.valid ? "Valid" : "Invalid"}</span></div>
             <div className="scenario-stats">
-              <span>Source <b>{source?.nodeId ?? "not selected"}</b></span>
-              <span>Sink <b>{sink?.nodeId ?? "not selected"}</b></span>
+              <label>Source <select aria-label="Source node" value={source?.nodeId ?? ""} onChange={(event) => event.target.value && updateScenario((current) => setTerminal(current, "source", event.target.value))}><option value="">not selected</option>{graphResult.graph?.nodes.map((node) => <option key={node.id} value={node.id}>{node.id}</option>)}</select></label>
+              <label>Sink <select aria-label="Sink node" value={sink?.nodeId ?? ""} onChange={(event) => event.target.value && updateScenario((current) => setTerminal(current, "sink", event.target.value))}><option value="">not selected</option>{graphResult.graph?.nodes.map((node) => <option key={node.id} value={node.id}>{node.id}</option>)}</select></label>
+              <label>Edge <select aria-label="Scenario edge" value={selectedEdgeId} onChange={(event) => setSelectedEdgeId(event.target.value)}><option value="">select on map</option>{graphResult.graph?.edges.map((edge) => <option key={edge.id} value={edge.id}>{edge.id}</option>)}</select></label>
               <span>Usable edges <b>{prepared.validation.activeEdgeCount}</b> · Blocked <b>{prepared.validation.blockedEdgeCount}</b> · Penalized <b>{prepared.validation.penalizedEdgeCount}</b></span>
               <span>Connectivity <b>{connectivity === null ? "Not evaluated" : connectivity ? "Connected" : "Disconnected"}</b></span>
             </div>
@@ -128,10 +144,26 @@ export function MapWorkspace() {
             </div>
             <div className="penalty-row" aria-label="Soft penalty multiplier">
               {[1, 1.5, 2, 3].map((value) => <button type="button" aria-pressed={penaltyMultiplier === value} key={value} onClick={() => { setPenaltyMultiplier(value); setScenarioMode("penalty"); }}>{value}×</button>)}
-              <button type="button" className="clear-scenario" onClick={() => { setScenario(createEmptyScenario()); setScenarioMode(null); }}>Clear scenario</button>
+              <button type="button" className="clear-scenario" onClick={() => { setScenario(createEmptyScenario()); setScenarioMode(null); setPhysarumResult(null); setSelectedEdgeId(""); }}>Clear scenario</button>
+            </div>
+            <div className="scenario-actions">
+              <button type="button" disabled={!selectedEdgeId} onClick={() => selectedEdgeId && updateScenario((current) => toggleBlockedEdge(current, selectedEdgeId))}>Apply block</button>
+              <button type="button" disabled={!selectedEdgeId} onClick={() => selectedEdgeId && updateScenario((current) => setEdgePenalty(current, selectedEdgeId, penaltyMultiplier))}>Apply penalty</button>
             </div>
             {scenarioMode && <p className="scenario-hint">Click a graph {scenarioMode === "source" || scenarioMode === "sink" ? "node" : "edge"} on the map.</p>}
             {prepared.validation.issues.length > 0 && <p className="scenario-hint">{prepared.validation.issues[0].message}</p>}
+          </section>
+        )}
+        {prepared && (
+          <section className="scenario-section physarum-section" aria-label="Physarum controls">
+            <div className="scenario-heading"><strong>Physarum hydraulic core</strong>{physarumResult && <span className={physarumResult.converged ? "status-valid" : "status-invalid"}>{physarumResult.terminationReason}</span>}</div>
+            <button className="run-physarum" type="button" disabled={!prepared.network} onClick={() => prepared.network && setPhysarumResult(runPhysarum(prepared.network))}>Run Physarum</button>
+            {physarumResult && <div className="scenario-stats" aria-label="Physarum diagnostics">
+              <span>Iterations <b>{physarumResult.iteration}</b> · Converged <b>{physarumResult.converged ? "Yes" : "No"}</b></span>
+              <span>Max ΔD <b>{physarumResult.diagnostics.maxDeltaD.toExponential(2)}</b></span>
+              <span>Kirchhoff residual <b>{physarumResult.diagnostics.maximumKirchhoffResidual.toExponential(2)}</b></span>
+              {physarumResult.error && <span className="status-invalid">{physarumResult.error}</span>}
+            </div>}
           </section>
         )}
         <fieldset className="layer-list">

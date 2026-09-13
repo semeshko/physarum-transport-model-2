@@ -1,0 +1,83 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import type { Map as MapLibreMap, ProjectionSpecification } from "maplibre-gl";
+import { installLayerRegistry, syncLayerVisibility, type LayerRegistry } from "@/map/layer-registry";
+
+export type CameraCommand = { id: number; type: "zoom-in" | "zoom-out" | "reset" };
+type Props = { cameraCommand: CameraCommand | null; projection: "mercator" | "globe"; registry: LayerRegistry };
+const INITIAL_VIEW = { center: [24.0316, 49.8429] as [number, number], zoom: 12, bearing: 0, pitch: 0 };
+const BASEMAP_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+
+export function MapCanvas({ cameraCommand, projection, registry }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
+  const registryRef = useRef(registry);
+  const projectionRef = useRef(projection);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    registryRef.current = registry;
+  }, [registry]);
+
+  useEffect(() => {
+    projectionRef.current = projection;
+  }, [projection]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let loadingTimer: ReturnType<typeof setTimeout> | undefined;
+
+    async function initialiseMap() {
+      try {
+        const maplibregl = await import("maplibre-gl");
+        if (cancelled || !containerRef.current) return;
+        const map = new maplibregl.Map({ container: containerRef.current, style: BASEMAP_STYLE, ...INITIAL_VIEW, attributionControl: { compact: true } });
+        mapRef.current = map;
+        map.on("style.load", () => {
+          if (cancelled) return;
+          map.setProjection({ type: projectionRef.current });
+          installLayerRegistry(map, registryRef.current);
+          setIsLoading(false);
+          if (loadingTimer) clearTimeout(loadingTimer);
+        });
+        loadingTimer = setTimeout(() => {
+          if (!cancelled && !map.isStyleLoaded()) {
+            setError("The basemap is taking too long to load. Check your connection and reload.");
+            setIsLoading(false);
+          }
+        }, 15_000);
+      } catch (caught) {
+        console.error("MapLibre initialisation failed", caught);
+        if (!cancelled) {
+          setError("The map could not be started in this browser. Please reload and try again.");
+          setIsLoading(false);
+        }
+      }
+    }
+
+    initialiseMap();
+    return () => {
+      cancelled = true;
+      if (loadingTimer) clearTimeout(loadingTimer);
+      mapRef.current?.remove();
+      mapRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => { const map = mapRef.current; if (map?.isStyleLoaded()) syncLayerVisibility(map, registry); }, [registry]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map?.isStyleLoaded()) map.setProjection({ type: projection } as ProjectionSpecification);
+  }, [projection]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !cameraCommand) return;
+    if (cameraCommand.type === "zoom-in") map.zoomIn();
+    if (cameraCommand.type === "zoom-out") map.zoomOut();
+    if (cameraCommand.type === "reset") map.easeTo(INITIAL_VIEW);
+  }, [cameraCommand]);
+
+  return <><div ref={containerRef} className="map-canvas" aria-label="Interactive map" />{isLoading && <div className="map-status">Loading map…</div>}{error && <div className="map-status" role="alert">{error}</div>}</>;
+}

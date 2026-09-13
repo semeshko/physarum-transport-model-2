@@ -1,0 +1,7 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    { "type": "Feature", "properties": { "id": "west-east" }, "geometry": { "type": "LineString", "coordinates": [[24.0064, 49.8398], [24.0192, 49.8421], [24.0316, 49.8429], [24.0448, 49.8404], [24.0582, 49.8461]] } },
+    { "type": "Feature", "properties": { "id": "north-south" }, "geometry": { "type": "LineString", "coordinates": [[24.0261, 49.8588], [24.0298, 49.8503], [24.0316, 49.8429], [24.0351, 49.8328], [24.0418, 49.8238]] } }
+  ]
+}

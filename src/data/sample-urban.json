@@ -1,10 +1,11 @@
 {
   "type": "FeatureCollection",
   "features": [
-    { "type": "Feature", "id": "road-main", "properties": { "name": "Central Avenue", "highway": "primary" }, "geometry": { "type": "LineString", "coordinates": [[24.018, 49.842], [24.029, 49.843], [24.041, 49.841], [24.052, 49.845]] } },
-    { "type": "Feature", "id": "road-north", "properties": { "name": "North Street", "highway": "residential" }, "geometry": { "type": "LineString", "coordinates": [[24.028, 49.854], [24.029, 49.843], [24.032, 49.833]] } },
-    { "type": "Feature", "properties": { "name": "Market Street", "highway": "secondary" }, "geometry": { "type": "LineString", "coordinates": [[24.017, 49.849], [24.029, 49.843], [24.043, 49.835]] } },
-    { "type": "Feature", "id": "park-path", "properties": { "name": "Park Walk", "highway": "footway" }, "geometry": { "type": "LineString", "coordinates": [[24.036, 49.849], [24.039, 49.847], [24.043, 49.848]] } },
+    { "type": "Feature", "id": "road-main", "properties": { "name": "Central Avenue", "highway": "primary" }, "geometry": { "type": "LineString", "coordinates": [[24.01, 49.84], [24.05, 49.84]] } },
+    { "type": "Feature", "id": "road-cross", "properties": { "name": "Cross Street", "highway": "residential" }, "geometry": { "type": "LineString", "coordinates": [[24.03, 49.82], [24.03, 49.86]] } },
+    { "type": "Feature", "id": "road-endpoint", "properties": { "name": "Endpoint Street", "highway": "secondary" }, "geometry": { "type": "LineString", "coordinates": [[24.05, 49.84], [24.06, 49.85]] } },
+    { "type": "Feature", "id": "park-path", "properties": { "name": "Park Walk", "highway": "footway" }, "geometry": { "type": "LineString", "coordinates": [[24.04, 49.83], [24.04, 49.84]] } },
+    { "type": "Feature", "id": "neighborhood-streets", "properties": { "name": "Neighborhood Streets", "highway": "residential" }, "geometry": { "type": "MultiLineString", "coordinates": [[[24.01, 49.85], [24.02, 49.85]], [[24.02, 49.85], [24.025, 49.855]]] } },
     { "type": "Feature", "id": "building-a", "properties": { "building": "apartments" }, "geometry": { "type": "Polygon", "coordinates": [[[24.024, 49.846], [24.027, 49.846], [24.027, 49.848], [24.024, 49.848], [24.024, 49.846]]] } },
     { "type": "Feature", "id": "building-b", "properties": { "building": "commercial" }, "geometry": { "type": "Polygon", "coordinates": [[[24.032, 49.837], [24.035, 49.837], [24.035, 49.839], [24.032, 49.839], [24.032, 49.837]]] } },
     { "type": "Feature", "id": "building-c", "properties": { "building": "school" }, "geometry": { "type": "Polygon", "coordinates": [[[24.044, 49.841], [24.048, 49.841], [24.048, 49.843], [24.044, 49.843], [24.044, 49.841]]] } },

@@ -1,6 +1,6 @@
 import { calculateBounds } from "./bounds";
 import { classifyFeature } from "./classification";
-import { GIS_CATEGORIES, GIS_CRS, type GISCategory, type GISDataset, type GISDatasetSource, type GISFeature, type GISGeometry, type GISPosition, type GISProperties } from "./types";
+import { GIS_CATEGORIES, GIS_CRS, type GISCategory, type GISDataset, type GISDatasetSource, type GISFeature, type GISGeometry, type GISLineTopology, type GISPosition, type GISProperties, type GISVertexAnchor } from "./types";
 
 export class GISIngestionError extends Error {
   constructor(message: string) {
@@ -87,7 +87,26 @@ function normalizeFeature(value: unknown, index: number): GISFeature {
   const normalizedProperties = properties(input.properties, `features[${index}].properties`);
   if (input.id !== undefined && typeof input.id !== "string" && typeof input.id !== "number") throw new GISIngestionError(`features[${index}].id must be a string or number.`);
   const id = input.id === undefined ? `generated-${hash(JSON.stringify([index, normalizedGeometry, normalizedProperties]))}` : String(input.id);
-  return { id, geometry: normalizedGeometry, properties: normalizedProperties, category: classifyFeature(normalizedProperties) };
+  const lineTopology = normalizeLineTopology(input.lineTopology, normalizedGeometry, `features[${index}].lineTopology`);
+  return { id, geometry: normalizedGeometry, properties: normalizedProperties, category: classifyFeature(normalizedProperties), ...(lineTopology ? { lineTopology } : {}) };
+}
+
+function normalizeLineTopology(value: unknown, geometryValue: GISGeometry, path: string): GISLineTopology | undefined {
+  if (value === undefined) return undefined;
+  if (geometryValue.type !== "LineString" && geometryValue.type !== "MultiLineString") throw new GISIngestionError(`${path} is only valid for line geometry.`);
+  const input = object(value, `${path} must be an object.`);
+  if (input.mode !== "authoritative" || !Array.isArray(input.vertexAnchors) || typeof input.missingExpectedAnchors !== "boolean") throw new GISIngestionError(`${path} is malformed.`);
+  const parts = geometryValue.type === "LineString" ? [geometryValue.coordinates] : geometryValue.coordinates;
+  if (input.vertexAnchors.length !== parts.length) throw new GISIngestionError(`${path}.vertexAnchors must match geometry parts.`);
+  const vertexAnchors = input.vertexAnchors.map((partValue, partIndex) => {
+    if (!Array.isArray(partValue) || partValue.length !== parts[partIndex].length) throw new GISIngestionError(`${path}.vertexAnchors[${partIndex}] must match geometry vertices.`);
+    return partValue.map((anchorValue, vertexIndex): GISVertexAnchor => {
+      const anchor = object(anchorValue, `${path}.vertexAnchors[${partIndex}][${vertexIndex}] must be an anchor.`);
+      if (typeof anchor.id !== "string" || anchor.id.length === 0 || !["source", "boundary", "fallback"].includes(String(anchor.kind))) throw new GISIngestionError(`${path}.vertexAnchors[${partIndex}][${vertexIndex}] is invalid.`);
+      return { id: anchor.id, kind: anchor.kind as GISVertexAnchor["kind"] };
+    });
+  });
+  return { mode: "authoritative", vertexAnchors, missingExpectedAnchors: input.missingExpectedAnchors };
 }
 
 function emptyCategoryCounts(): Record<GISCategory, number> {

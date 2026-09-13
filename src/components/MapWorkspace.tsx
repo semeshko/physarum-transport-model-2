@@ -5,6 +5,7 @@ import sampleUrban from "@/data/sample-urban.json";
 import { buildTransportGraph } from "@/graph/build";
 import { createTransportWorkspaceRegistry, DEFAULT_GRAPH_LAYER_VISIBILITY, type GraphLayerVisibility } from "@/graph/map-registry";
 import { GISIngestionError, ingestGeoJSON } from "@/gis/ingest";
+import { clipLineDatasetToBounds } from "@/gis/clip-lines";
 import { DEFAULT_GIS_LAYER_VISIBILITY, type GISLayerGroup, type GISLayerVisibility } from "@/gis/map-registry";
 import type { GISBounds, GISDataset } from "@/gis/types";
 import { usePhysarumRuntime } from "@/hooks/usePhysarumRuntime";
@@ -108,9 +109,10 @@ export function MapWorkspace() {
       if (converted.wayCount === 0) throw new OSMRequestError("empty", "No usable OSM transport ways were returned for this area.");
       const adapterMilliseconds = performance.now() - adapterStarted;
       const boundsKey = formatOSMBounds(osmBounds);
-      const imported = ingestGeoJSON(converted.featureCollection, { name: `OSM transport · ${boundsKey}`, source: { kind: "osm", name: `${boundsKey}:${converted.timestamp ?? "current"}` } });
+      const ingested = ingestGeoJSON(converted.featureCollection, { name: `OSM transport · ${boundsKey}`, source: { kind: "osm", name: `${boundsKey}:${converted.timestamp ?? "current"}` } });
+      const imported = clipLineDatasetToBounds(ingested, osmBounds);
       resetForDataset({ ...imported, warnings: [...imported.warnings, ...converted.warnings, "OSM access and one-way tags are preserved but not enforced; the graph is currently undirected."] });
-      setOSMSummary({ bounds: osmBounds, wayCount: converted.wayCount, skippedElementCount: converted.skippedElementCount, fetchMilliseconds, adapterMilliseconds, warnings: converted.warnings });
+      setOSMSummary({ bounds: osmBounds, wayCount: converted.wayCount, skippedElementCount: converted.skippedElementCount, missingTopologyWayCount: converted.missingTopologyWayCount, fetchMilliseconds, adapterMilliseconds, warnings: converted.warnings });
       if (imported.bounds) command({ type: "fit-bounds", bounds: imported.bounds });
     } catch (error) {
       if (controller !== osmRequestRef.current || error instanceof OSMRequestError && error.code === "aborted") return;
@@ -188,6 +190,7 @@ export function MapWorkspace() {
           {osmAreaError && <div className="import-error" role="alert">{osmAreaError}</div>}
           {osmSummary && <div className="scenario-stats" aria-label="OSM import summary">
             <span>OSM ways <b>{osmSummary.wayCount}</b> · Skipped <b>{osmSummary.skippedElementCount}</b></span>
+            <span>Missing topology anchors <b>{osmSummary.missingTopologyWayCount}</b></span>
             <span>Fetch <b>{osmSummary.fetchMilliseconds.toFixed(0)} ms</b> · Adapter <b>{osmSummary.adapterMilliseconds.toFixed(1)} ms</b></span>
             <span>Graph build <b>{graphResult.buildMilliseconds.toFixed(1)} ms</b></span>
           </div>}
@@ -203,7 +206,11 @@ export function MapWorkspace() {
           <section className="dataset-summary graph-summary" aria-label="Graph summary">
             <strong>Transport graph</strong>
             <span>Nodes {graphResult.graph.diagnostics.nodeCount} · Edges {graphResult.graph.diagnostics.edgeCount}</span>
-            <span>Components {graphResult.graph.diagnostics.connectedComponentCount} · Largest {graphResult.graph.diagnostics.largestConnectedComponentNodeCount} nodes</span>
+            <span>Anchored {graphResult.graph.diagnostics.anchoredNodeCount} · Synthetic / geometric {graphResult.graph.diagnostics.syntheticOrGeometricNodeCount}</span>
+            <span>Components {graphResult.graph.diagnostics.connectedComponentCount} · Largest {graphResult.graph.diagnostics.largestConnectedComponentNodeCount} nodes ({graphResult.graph.diagnostics.nodeCount ? (100 * graphResult.graph.diagnostics.largestConnectedComponentNodeCount / graphResult.graph.diagnostics.nodeCount).toFixed(1) : "0.0"}%)</span>
+            <span>Degree-1 endpoints {graphResult.graph.diagnostics.degreeOneEndpointCount} · Boundary endpoints {graphResult.graph.diagnostics.boundaryEndpointCount}</span>
+            <span>Topology QA: missing anchors {graphResult.graph.diagnostics.missingExpectedTopologyFeatureCount} · coordinate conflicts {graphResult.graph.diagnostics.conflictingAnchorCoordinateCount} · nearby unconnected endpoints {graphResult.graph.diagnostics.nearbyUnconnectedEndpointCount}</span>
+            <span>Segments {graphResult.graph.diagnostics.transportSegmentCount} · candidate pairs {graphResult.graph.diagnostics.candidateSegmentPairCount} · geometric tests {graphResult.graph.diagnostics.geometricIntersectionTestCount} · intersections {graphResult.graph.diagnostics.geometricIntersectionCount}</span>
             <span>Merged {graphResult.graph.diagnostics.duplicateEdgesMerged} duplicates · Resolved {graphResult.graph.diagnostics.collinearOverlapsResolved} overlaps</span>
             <span>Ignored {graphResult.graph.diagnostics.gradeSeparatedCrossingsIgnored} grade-separated crossings · Rejected {graphResult.graph.diagnostics.zeroLengthEdgesRejected + graphResult.graph.diagnostics.selfLoopsRejected + graphResult.graph.diagnostics.invalidSegmentsRejected} invalid edges</span>
             <span>Snap tolerance {graphResult.graph.snapToleranceDegrees}° · Length meters</span>

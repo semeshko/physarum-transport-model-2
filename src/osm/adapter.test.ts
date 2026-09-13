@@ -16,6 +16,7 @@ describe("OSM domain adapter", () => {
     const converted = overpassResponseToGeoJSON(SMALL_OSM_RESPONSE_FIXTURE);
     expect(converted.wayCount).toBe(4);
     expect(converted.featureCollection.features[0]).toMatchObject({ id: "osm-way-101", geometry: { type: "LineString", coordinates: [[24.03, 49.84], [24.031, 49.84], [24.032, 49.84]] } });
+    expect(converted.featureCollection.features[0]).toMatchObject({ lineTopology: { mode: "authoritative", vertexAnchors: [[{ id: "osm-node-1" }, { id: "osm-node-10" }, { id: "osm-node-2" }]], missingExpectedAnchors: false } });
   });
 
   it("preserves highway and future routing metadata without enforcing it", () => {
@@ -63,7 +64,24 @@ describe("OSM domain adapter", () => {
     expect(first.nodes.length).toBeGreaterThan(0);
     expect(first.edges.length).toBeGreaterThan(0);
     expect(first.edges.some((edge) => edge.provenance.some((item) => item.sourceFeatureId === "osm-way-101"))).toBe(true);
-    expect(first.diagnostics.gradeSeparatedCrossingsIgnored).toBeGreaterThan(0);
+    expect(first.diagnostics.geometricIntersectionTestCount).toBe(0);
+    expect(first.diagnostics.anchoredNodeCount).toBeGreaterThan(0);
+  });
+
+  it("preserves anchored graph identity when Overpass elements are reordered", () => {
+    const reversed = { ...SMALL_OSM_RESPONSE_FIXTURE, elements: [...SMALL_OSM_RESPONSE_FIXTURE.elements].reverse() };
+    const converted = overpassResponseToGeoJSON(reversed);
+    const reorderedDataset = ingestGeoJSON(converted.featureCollection, { name: "fixture", source: { kind: "osm", name: "fixture" } });
+    const first = buildTransportGraph(dataset()); const second = buildTransportGraph(reorderedDataset);
+    expect(second.nodes.map((node) => node.id)).toEqual(first.nodes.map((node) => node.id));
+    expect(second.edges.map((edge) => edge.id)).toEqual(first.edges.map((edge) => edge.id));
+  });
+
+  it("uses isolated fallback anchors and reports missing ordered node IDs", () => {
+    const result = overpassResponseToGeoJSON({ elements: [{ type: "way", id: 1, tags: { highway: "road" }, geometry: [{ lon: 0, lat: 0 }, { lon: 1, lat: 0 }] }] });
+    expect(result.missingTopologyWayCount).toBe(1);
+    expect(result.warnings.join(" ")).toMatch(/missing valid ordered node anchors/);
+    expect(result.featureCollection.features[0]).toMatchObject({ lineTopology: { missingExpectedAnchors: true, vertexAnchors: [[{ id: "osm-way-1-vertex-0", kind: "fallback" }, { id: "osm-way-1-vertex-1", kind: "fallback" }]] } });
   });
 
   it("prepares an ordinary scenario on an OSM-derived graph", () => {

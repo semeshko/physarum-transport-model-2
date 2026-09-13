@@ -32,6 +32,17 @@ export function calculateGraphDiagnostics(nodes: readonly GraphNode[], edges: re
   }
 
   const degrees = [...adjacency.values()].map((neighbors) => neighbors.size);
+  const endpoints = nodes.filter((node) => adjacency.get(node.id)?.size === 1);
+  let nearbyUnconnectedEndpointCount = 0;
+  for (let first = 0; first < endpoints.length; first += 1) {
+    for (let second = first + 1; second < endpoints.length; second += 1) {
+      const a = endpoints[first]; const b = endpoints[second];
+      if (a.topologyKind === "boundary" || b.topologyKind === "boundary") continue;
+      const longitudeMeters = (a.position[0] - b.position[0]) * 111_320 * Math.cos(((a.position[1] + b.position[1]) * Math.PI) / 360);
+      const latitudeMeters = (a.position[1] - b.position[1]) * 110_540;
+      if (Math.hypot(longitudeMeters, latitudeMeters) <= 0.2) nearbyUnconnectedEndpointCount += 1;
+    }
+  }
   return {
     nodeCount: nodes.length,
     edgeCount: edges.length,
@@ -43,6 +54,11 @@ export function calculateGraphDiagnostics(nodes: readonly GraphNode[], edges: re
       maximum: degrees.length ? Math.max(...degrees) : 0,
       average: degrees.length ? degrees.reduce((sum, degree) => sum + degree, 0) / degrees.length : 0,
     },
+    anchoredNodeCount: nodes.filter((node) => node.topologyKind === "source").length,
+    syntheticOrGeometricNodeCount: nodes.filter((node) => node.topologyKind !== "source").length,
+    degreeOneEndpointCount: endpoints.length,
+    boundaryEndpointCount: endpoints.filter((node) => node.topologyKind === "boundary").length,
+    nearbyUnconnectedEndpointCount,
     ...cleanup,
   };
 }

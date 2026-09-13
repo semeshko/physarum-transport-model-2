@@ -1,8 +1,10 @@
-import type { GISCategory, GISPosition, GISProperties } from "../gis/types";
+import type { GISCategory, GISPosition, GISProperties, GISVertexAnchor } from "../gis/types";
 
 export type GraphNode = {
   readonly id: string;
   readonly position: GISPosition;
+  readonly topologyAnchorId?: string;
+  readonly topologyKind?: GISVertexAnchor["kind"];
 };
 
 export type GraphEdgeProvenance = {
@@ -41,6 +43,17 @@ export type GraphDiagnostics = {
   readonly gradeSeparatedCrossingsIgnored: number;
   readonly collinearOverlapsResolved: number;
   readonly invalidSegmentsRejected: number;
+  readonly transportSegmentCount: number;
+  readonly candidateSegmentPairCount: number;
+  readonly geometricIntersectionTestCount: number;
+  readonly geometricIntersectionCount: number;
+  readonly anchoredNodeCount: number;
+  readonly syntheticOrGeometricNodeCount: number;
+  readonly missingExpectedTopologyFeatureCount: number;
+  readonly conflictingAnchorCoordinateCount: number;
+  readonly degreeOneEndpointCount: number;
+  readonly boundaryEndpointCount: number;
+  readonly nearbyUnconnectedEndpointCount: number;
 };
 
 export type GraphCleanupMetrics = Pick<
@@ -51,6 +64,12 @@ export type GraphCleanupMetrics = Pick<
   | "gradeSeparatedCrossingsIgnored"
   | "collinearOverlapsResolved"
   | "invalidSegmentsRejected"
+  | "transportSegmentCount"
+  | "candidateSegmentPairCount"
+  | "geometricIntersectionTestCount"
+  | "geometricIntersectionCount"
+  | "missingExpectedTopologyFeatureCount"
+  | "conflictingAnchorCoordinateCount"
 >;
 
 export type TransportGraph = {

@@ -30,12 +30,19 @@ export type GISGeometry =
 export type GISGeometryType = GISGeometry["type"];
 export type GISBounds = readonly [west: number, south: number, east: number, north: number];
 export type GISProperties = Readonly<Record<string, unknown>>;
+export type GISVertexAnchor = { readonly id: string; readonly kind: "source" | "boundary" | "fallback" };
+export type GISLineTopology = {
+  readonly mode: "authoritative";
+  readonly vertexAnchors: readonly (readonly GISVertexAnchor[])[];
+  readonly missingExpectedAnchors: boolean;
+};
 
 export type GISFeature = {
   readonly id: string;
   readonly geometry: GISGeometry;
   readonly properties: GISProperties;
   readonly category: GISCategory;
+  readonly lineTopology?: GISLineTopology;
 };
 
 export type GISDatasetSource = {

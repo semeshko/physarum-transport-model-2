@@ -32,8 +32,13 @@ export type PhysarumState = {
   readonly edgeFlows: Readonly<Record<string, number>>;
   readonly diagnostics: PhysarumDiagnostics;
   readonly converged: boolean;
-  readonly terminationReason: PhysarumTerminationReason;
+  readonly terminationReason: PhysarumTerminationReason | null;
   readonly error: string | null;
+};
+
+export type PhysarumSimulation = {
+  readonly parameters: PhysarumParameters;
+  readonly state: PhysarumState;
 };
 
 export type HydraulicSolution = {

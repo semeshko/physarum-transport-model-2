@@ -7,9 +7,9 @@ import { createTransportWorkspaceRegistry, DEFAULT_GRAPH_LAYER_VISIBILITY, type 
 import { GISIngestionError, ingestGeoJSON } from "@/gis/ingest";
 import { DEFAULT_GIS_LAYER_VISIBILITY, type GISLayerGroup, type GISLayerVisibility } from "@/gis/map-registry";
 import type { GISDataset } from "@/gis/types";
+import { usePhysarumRuntime } from "@/hooks/usePhysarumRuntime";
 import { addPhysarumResultToRegistry } from "@/physarum/map-registry";
-import { runPhysarum } from "@/physarum/solver";
-import type { PhysarumState } from "@/physarum/types";
+import { DEFAULT_PHYSARUM_PARAMETERS } from "@/physarum/parameters";
 import { addScenarioToRegistry } from "@/scenario/map-registry";
 import { prepareNetwork } from "@/scenario/prepare";
 import { createEmptyScenario, setEdgePenalty, setTerminal, toggleBlockedEdge } from "@/scenario/scenario";
@@ -33,9 +33,9 @@ export function MapWorkspace() {
   const [scenario, setScenario] = useState<AnalysisScenario>(() => createEmptyScenario());
   const [scenarioMode, setScenarioMode] = useState<ScenarioMode>(null);
   const [penaltyMultiplier, setPenaltyMultiplier] = useState(1.5);
-  const [physarumResult, setPhysarumResult] = useState<PhysarumState | null>(null);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [selectedEdgeId, setSelectedEdgeId] = useState("");
+  const physarum = usePhysarumRuntime();
   const commandId = useRef(0);
   const graphResult = useMemo(() => {
     try { return { graph: buildTransportGraph(dataset), error: null }; }
@@ -46,8 +46,8 @@ export function MapWorkspace() {
     if (!graphResult.graph) return null;
     const base = createTransportWorkspaceRegistry(dataset, graphResult.graph, visibility, graphVisibility);
     const withScenario = addScenarioToRegistry(base, graphResult.graph, scenario);
-    return addPhysarumResultToRegistry(withScenario, graphResult.graph, physarumResult);
-  }, [dataset, graphResult.graph, graphVisibility, physarumResult, scenario, visibility]);
+    return addPhysarumResultToRegistry(withScenario, graphResult.graph, physarum.runtime.state);
+  }, [dataset, graphResult.graph, graphVisibility, physarum.runtime.state, scenario, visibility]);
 
   function command(value: CameraCommandInput) {
     commandId.current += 1;
@@ -67,7 +67,7 @@ export function MapWorkspace() {
       setGraphVisibility(DEFAULT_GRAPH_LAYER_VISIBILITY);
       setScenario(createEmptyScenario());
       setScenarioMode(null);
-      setPhysarumResult(null);
+      physarum.reset();
       setSelectedEdgeId("");
       if (imported.bounds) command({ type: "fit-bounds", bounds: imported.bounds });
     } catch (error) {
@@ -85,7 +85,7 @@ export function MapWorkspace() {
 
   function updateScenario(updater: (current: AnalysisScenario) => AnalysisScenario) {
     setScenario(updater);
-    setPhysarumResult(null);
+    physarum.reset();
   }
 
   const source = scenario.terminals.find((terminal) => terminal.role === "source");
@@ -144,7 +144,7 @@ export function MapWorkspace() {
             </div>
             <div className="penalty-row" aria-label="Soft penalty multiplier">
               {[1, 1.5, 2, 3].map((value) => <button type="button" aria-pressed={penaltyMultiplier === value} key={value} onClick={() => { setPenaltyMultiplier(value); setScenarioMode("penalty"); }}>{value}×</button>)}
-              <button type="button" className="clear-scenario" onClick={() => { setScenario(createEmptyScenario()); setScenarioMode(null); setPhysarumResult(null); setSelectedEdgeId(""); }}>Clear scenario</button>
+              <button type="button" className="clear-scenario" onClick={() => { setScenario(createEmptyScenario()); setScenarioMode(null); physarum.reset(); setSelectedEdgeId(""); }}>Clear scenario</button>
             </div>
             <div className="scenario-actions">
               <button type="button" disabled={!selectedEdgeId} onClick={() => selectedEdgeId && updateScenario((current) => toggleBlockedEdge(current, selectedEdgeId))}>Apply block</button>
@@ -156,13 +156,19 @@ export function MapWorkspace() {
         )}
         {prepared && (
           <section className="scenario-section physarum-section" aria-label="Physarum controls">
-            <div className="scenario-heading"><strong>Physarum hydraulic core</strong>{physarumResult && <span className={physarumResult.converged ? "status-valid" : "status-invalid"}>{physarumResult.terminationReason}</span>}</div>
-            <button className="run-physarum" type="button" disabled={!prepared.network} onClick={() => prepared.network && setPhysarumResult(runPhysarum(prepared.network))}>Run Physarum</button>
-            {physarumResult && <div className="scenario-stats" aria-label="Physarum diagnostics">
-              <span>Iterations <b>{physarumResult.iteration}</b> · Converged <b>{physarumResult.converged ? "Yes" : "No"}</b></span>
-              <span>Max ΔD <b>{physarumResult.diagnostics.maxDeltaD.toExponential(2)}</b></span>
-              <span>Kirchhoff residual <b>{physarumResult.diagnostics.maximumKirchhoffResidual.toExponential(2)}</b></span>
-              {physarumResult.error && <span className="status-invalid">{physarumResult.error}</span>}
+            <div className="scenario-heading"><strong>Physarum runtime</strong><span className={physarum.runtime.status === "completed" ? "status-valid" : physarum.runtime.status === "error" ? "status-invalid" : ""}>{physarum.runtime.status}</span></div>
+            <div className="runtime-actions">
+              {(physarum.runtime.status === "idle" || physarum.runtime.status === "completed" || physarum.runtime.status === "cancelled" || physarum.runtime.status === "error") && <button className="run-physarum" type="button" disabled={!prepared.network} onClick={() => prepared.network && physarum.start(prepared.network)}>Run</button>}
+              {physarum.runtime.status === "running" && <button className="run-physarum" type="button" onClick={physarum.pause}>Pause</button>}
+              {physarum.runtime.status === "paused" && <button className="run-physarum" type="button" onClick={physarum.resume}>Resume</button>}
+              {(physarum.runtime.status === "running" || physarum.runtime.status === "paused" || physarum.runtime.status === "completed" || physarum.runtime.status === "error") && <button className="run-physarum reset-runtime" type="button" onClick={physarum.reset}>Reset runtime</button>}
+            </div>
+            {physarum.runtime.state && <div className="scenario-stats" aria-label="Physarum diagnostics">
+              <span>Iteration <b>{physarum.runtime.state.iteration} / {DEFAULT_PHYSARUM_PARAMETERS.maxIterations}</b></span>
+              <span>Scientific termination <b>{physarum.runtime.state.terminationReason ?? "—"}</b></span>
+              <span>Max ΔD <b>{physarum.runtime.state.diagnostics.maxDeltaD.toExponential(2)}</b></span>
+              <span>Kirchhoff residual <b>{physarum.runtime.state.diagnostics.maximumKirchhoffResidual.toExponential(2)}</b></span>
+              {physarum.runtime.error && <span className="status-invalid">{physarum.runtime.error}</span>}
             </div>}
           </section>
         )}

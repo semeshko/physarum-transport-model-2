@@ -50,6 +50,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .scenario-hint { margin: 0.5rem 0 0 !important; color: var(--muted); font-size: 0.68rem !important; }
 .run-physarum { width: 100%; min-height: 2.35rem; margin-top: 0.6rem; border: 1px solid rgba(66, 217, 200, 0.55); border-radius: 0.5rem; background: rgba(66, 217, 200, 0.14); color: var(--accent); cursor: pointer; font-size: 0.72rem; font-weight: 700; }
 .run-physarum:disabled { cursor: not-allowed; opacity: 0.38; }
+.runtime-actions { display: flex; gap: 0.4rem; }
+.runtime-actions .reset-runtime { border-color: rgba(248, 113, 113, 0.35); color: #fca5a5; }
 .map-status { position: absolute; z-index: 3; inset: 0; display: grid; place-items: center; padding: 1.5rem; background: var(--background); color: var(--muted); text-align: center; }
 .map-status[role="alert"] { color: #fecaca; }
 @media (max-width: 640px) {

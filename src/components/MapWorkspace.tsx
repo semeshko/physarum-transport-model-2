@@ -1,15 +1,20 @@
 "use client";
 
-import { useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import sampleUrban from "@/data/sample-urban.json";
 import { buildTransportGraph } from "@/graph/build";
 import { createTransportWorkspaceRegistry, DEFAULT_GRAPH_LAYER_VISIBILITY, type GraphLayerVisibility } from "@/graph/map-registry";
 import { GISIngestionError, ingestGeoJSON } from "@/gis/ingest";
 import { DEFAULT_GIS_LAYER_VISIBILITY, type GISLayerGroup, type GISLayerVisibility } from "@/gis/map-registry";
-import type { GISDataset } from "@/gis/types";
+import type { GISBounds, GISDataset } from "@/gis/types";
 import { usePhysarumRuntime } from "@/hooks/usePhysarumRuntime";
 import { addPhysarumResultToRegistry } from "@/physarum/map-registry";
 import { DEFAULT_PHYSARUM_PARAMETERS } from "@/physarum/parameters";
+import { overpassResponseToGeoJSON } from "@/osm/adapter";
+import { formatOSMBounds, measureOSMArea, validateOSMArea } from "@/osm/area";
+import { fetchOSMTransport, OSMRequestError } from "@/osm/client";
+import { addOSMAreaToRegistry } from "@/osm/map-registry";
+import type { OSMImportSummary } from "@/osm/types";
 import { addScenarioToRegistry } from "@/scenario/map-registry";
 import { prepareNetwork } from "@/scenario/prepare";
 import { createEmptyScenario, setEdgePenalty, setTerminal, toggleBlockedEdge } from "@/scenario/scenario";
@@ -19,7 +24,7 @@ import { MapCanvas, type CameraCommand, type MapFeatureSelection } from "./MapCa
 const initialDataset = ingestGeoJSON(sampleUrban, { name: "Synthetic urban sample", source: { kind: "bundled", name: "sample-urban.json" } });
 const LAYER_LABELS: Readonly<Record<GISLayerGroup, string>> = { roadsPaths: "Original transport", buildings: "Buildings", water: "Water", green: "Green areas" };
 type CameraCommandInput =
-  | { type: "zoom-in" | "zoom-out" | "reset" }
+  | { type: "zoom-in" | "zoom-out" | "reset" | "capture-bounds" }
   | { type: "fit-bounds"; bounds: NonNullable<GISDataset["bounds"]> };
 type ScenarioMode = "source" | "sink" | "block" | "penalty" | null;
 
@@ -35,40 +40,101 @@ export function MapWorkspace() {
   const [penaltyMultiplier, setPenaltyMultiplier] = useState(1.5);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [selectedEdgeId, setSelectedEdgeId] = useState("");
+  const [osmBounds, setOSMBounds] = useState<GISBounds | null>(null);
+  const [osmAreaError, setOSMAreaError] = useState<string | null>(null);
+  const [osmLoading, setOSMLoading] = useState(false);
+  const [osmSummary, setOSMSummary] = useState<OSMImportSummary | null>(null);
   const physarum = usePhysarumRuntime();
   const commandId = useRef(0);
+  const osmRequestRef = useRef<AbortController | null>(null);
   const graphResult = useMemo(() => {
-    try { return { graph: buildTransportGraph(dataset), error: null }; }
-    catch (error) { return { graph: null, error: error instanceof Error ? error.message : "Graph extraction failed." }; }
+    const started = performance.now();
+    try { return { graph: buildTransportGraph(dataset), error: null, buildMilliseconds: performance.now() - started }; }
+    catch (error) { return { graph: null, error: error instanceof Error ? error.message : "Graph extraction failed.", buildMilliseconds: performance.now() - started }; }
   }, [dataset]);
   const prepared = useMemo(() => graphResult.graph ? prepareNetwork(graphResult.graph, scenario) : null, [graphResult.graph, scenario]);
   const registry = useMemo(() => {
     if (!graphResult.graph) return null;
     const base = createTransportWorkspaceRegistry(dataset, graphResult.graph, visibility, graphVisibility);
     const withScenario = addScenarioToRegistry(base, graphResult.graph, scenario);
-    return addPhysarumResultToRegistry(withScenario, graphResult.graph, physarum.runtime.state);
-  }, [dataset, graphResult.graph, graphVisibility, physarum.runtime.state, scenario, visibility]);
+    const withResult = addPhysarumResultToRegistry(withScenario, graphResult.graph, physarum.runtime.state);
+    return addOSMAreaToRegistry(withResult, osmBounds);
+  }, [dataset, graphResult.graph, graphVisibility, osmBounds, physarum.runtime.state, scenario, visibility]);
+
+  useEffect(() => () => osmRequestRef.current?.abort(), []);
 
   function command(value: CameraCommandInput) {
     commandId.current += 1;
     setCameraCommand({ ...value, id: commandId.current } as CameraCommand);
   }
 
+  function resetForDataset(imported: GISDataset) {
+    setDataset(imported);
+    setVisibility(DEFAULT_GIS_LAYER_VISIBILITY);
+    setGraphVisibility(DEFAULT_GRAPH_LAYER_VISIBILITY);
+    setScenario(createEmptyScenario());
+    setScenarioMode(null);
+    physarum.reset();
+    setSelectedEdgeId("");
+  }
+
+  function captureOSMArea(bounds: GISBounds) {
+    osmRequestRef.current?.abort();
+    osmRequestRef.current = null;
+    setOSMLoading(false);
+    setOSMBounds(bounds);
+    setOSMSummary(null);
+    physarum.reset();
+    try { validateOSMArea(bounds); setOSMAreaError(null); }
+    catch (error) { setOSMAreaError(error instanceof Error ? error.message : "The selected area is invalid."); }
+  }
+
+  async function loadOSMNetwork() {
+    if (!osmBounds) return;
+    physarum.reset();
+    setImportError(null);
+    setOSMAreaError(null);
+    osmRequestRef.current?.abort();
+    const controller = new AbortController();
+    osmRequestRef.current = controller;
+    setOSMLoading(true);
+    const fetchStarted = performance.now();
+    try {
+      validateOSMArea(osmBounds);
+      const payload = await fetchOSMTransport(osmBounds, { signal: controller.signal });
+      const fetchMilliseconds = performance.now() - fetchStarted;
+      const adapterStarted = performance.now();
+      const converted = overpassResponseToGeoJSON(payload);
+      if (converted.wayCount === 0) throw new OSMRequestError("empty", "No usable OSM transport ways were returned for this area.");
+      const adapterMilliseconds = performance.now() - adapterStarted;
+      const boundsKey = formatOSMBounds(osmBounds);
+      const imported = ingestGeoJSON(converted.featureCollection, { name: `OSM transport · ${boundsKey}`, source: { kind: "osm", name: `${boundsKey}:${converted.timestamp ?? "current"}` } });
+      resetForDataset({ ...imported, warnings: [...imported.warnings, ...converted.warnings, "OSM access and one-way tags are preserved but not enforced; the graph is currently undirected."] });
+      setOSMSummary({ bounds: osmBounds, wayCount: converted.wayCount, skippedElementCount: converted.skippedElementCount, fetchMilliseconds, adapterMilliseconds, warnings: converted.warnings });
+      if (imported.bounds) command({ type: "fit-bounds", bounds: imported.bounds });
+    } catch (error) {
+      if (controller !== osmRequestRef.current || error instanceof OSMRequestError && error.code === "aborted") return;
+      setImportError(error instanceof Error ? error.message : "The OSM network could not be loaded.");
+    } finally {
+      if (controller === osmRequestRef.current) { osmRequestRef.current = null; setOSMLoading(false); }
+    }
+  }
+
   async function importFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
+    osmRequestRef.current?.abort();
+    osmRequestRef.current = null;
+    setOSMLoading(false);
+    setOSMSummary(null);
+    setOSMBounds(null);
+    setOSMAreaError(null);
     setImportError(null);
     try {
       const parsed: unknown = JSON.parse(await file.text());
       const imported = ingestGeoJSON(parsed, { name: file.name, source: { kind: "file", name: file.name } });
-      setDataset(imported);
-      setVisibility(DEFAULT_GIS_LAYER_VISIBILITY);
-      setGraphVisibility(DEFAULT_GRAPH_LAYER_VISIBILITY);
-      setScenario(createEmptyScenario());
-      setScenarioMode(null);
-      physarum.reset();
-      setSelectedEdgeId("");
+      resetForDataset(imported);
       if (imported.bounds) command({ type: "fit-bounds", bounds: imported.bounds });
     } catch (error) {
       const message = error instanceof GISIngestionError ? error.message : error instanceof SyntaxError ? "The selected file is not valid JSON." : "The selected GeoJSON file could not be imported.";
@@ -94,7 +160,7 @@ export function MapWorkspace() {
 
   return (
     <section className="map-workspace" aria-label="Physarum map workspace">
-      {registry && <MapCanvas cameraCommand={cameraCommand} projection={projection} registry={registry} onFeatureSelect={selectMapFeature} />}
+      {registry && <MapCanvas cameraCommand={cameraCommand} projection={projection} registry={registry} onFeatureSelect={selectMapFeature} onBoundsCaptured={captureOSMArea} />}
       <aside className={`map-panel${panelCollapsed ? " is-collapsed" : ""}`} aria-label="GIS controls">
         <header className="panel-heading">
           <div><h1>Physarum Transport Model 2.0</h1><p>GIS ingestion foundation · EPSG:4326</p></div>
@@ -108,6 +174,24 @@ export function MapWorkspace() {
           <button className="control-button fit-button" type="button" disabled={!dataset.bounds} onClick={() => dataset.bounds && command({ type: "fit-bounds", bounds: dataset.bounds })}>Fit to dataset</button>
           <button className="control-button projection-button" type="button" aria-label={`Switch to ${projection === "mercator" ? "globe" : "Mercator"} projection`} onClick={() => setProjection((current) => current === "mercator" ? "globe" : "mercator")}>{projection === "mercator" ? "Globe" : "Mercator"}</button>
         </div>
+        <section className="scenario-section osm-section" aria-label="OpenStreetMap import">
+          <div className="scenario-heading"><strong>OpenStreetMap network</strong><span>{osmLoading ? "Loading" : osmBounds ? "Area selected" : "No area"}</span></div>
+          <p>Zoom to a small district, capture the visible rectangle, then load roads and paths.</p>
+          <div className="runtime-actions">
+            <button className="run-physarum" type="button" onClick={() => command({ type: "capture-bounds" })}>Select current view</button>
+            <button className="run-physarum" type="button" disabled={!osmBounds || Boolean(osmAreaError) || osmLoading} onClick={loadOSMNetwork}>{osmLoading ? "Loading…" : "Load OSM network"}</button>
+          </div>
+          {osmBounds && <div className="scenario-stats" aria-label="OSM area summary">
+            <span>Bounds <b>{formatOSMBounds(osmBounds)}</b></span>
+            <span>Approximate area <b>{measureOSMArea(osmBounds).areaSquareKilometers.toFixed(2)} km²</b></span>
+          </div>}
+          {osmAreaError && <div className="import-error" role="alert">{osmAreaError}</div>}
+          {osmSummary && <div className="scenario-stats" aria-label="OSM import summary">
+            <span>OSM ways <b>{osmSummary.wayCount}</b> · Skipped <b>{osmSummary.skippedElementCount}</b></span>
+            <span>Fetch <b>{osmSummary.fetchMilliseconds.toFixed(0)} ms</b> · Adapter <b>{osmSummary.adapterMilliseconds.toFixed(1)} ms</b></span>
+            <span>Graph build <b>{graphResult.buildMilliseconds.toFixed(1)} ms</b></span>
+          </div>}
+        </section>
         <section className="dataset-summary" aria-label="Dataset summary">
           <strong>{dataset.name}</strong>
           <span>{dataset.featureCount} features · {dataset.geometryTypes.join(", ") || "No geometry"}</span>
@@ -123,6 +207,7 @@ export function MapWorkspace() {
             <span>Merged {graphResult.graph.diagnostics.duplicateEdgesMerged} duplicates · Resolved {graphResult.graph.diagnostics.collinearOverlapsResolved} overlaps</span>
             <span>Ignored {graphResult.graph.diagnostics.gradeSeparatedCrossingsIgnored} grade-separated crossings · Rejected {graphResult.graph.diagnostics.zeroLengthEdgesRejected + graphResult.graph.diagnostics.selfLoopsRejected + graphResult.graph.diagnostics.invalidSegmentsRejected} invalid edges</span>
             <span>Snap tolerance {graphResult.graph.snapToleranceDegrees}° · Length meters</span>
+            <span>Build time {graphResult.buildMilliseconds.toFixed(1)} ms</span>
           </section>
         )}
         {graphResult.error && <div className="import-error" role="alert">{graphResult.error}</div>}

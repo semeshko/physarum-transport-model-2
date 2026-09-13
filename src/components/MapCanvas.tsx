@@ -6,19 +6,20 @@ import { installLayerRegistry, syncLayerRegistry, type LayerRegistry } from "@/m
 import type { GISBounds } from "@/gis/types";
 
 export type CameraCommand =
-  | { id: number; type: "zoom-in" | "zoom-out" | "reset" }
+  | { id: number; type: "zoom-in" | "zoom-out" | "reset" | "capture-bounds" }
   | { id: number; type: "fit-bounds"; bounds: GISBounds };
 export type MapFeatureSelection = { readonly kind: "node" | "edge"; readonly id: string };
-type Props = { cameraCommand: CameraCommand | null; projection: "mercator" | "globe"; registry: LayerRegistry; onFeatureSelect?: (selection: MapFeatureSelection) => void };
+type Props = { cameraCommand: CameraCommand | null; projection: "mercator" | "globe"; registry: LayerRegistry; onFeatureSelect?: (selection: MapFeatureSelection) => void; onBoundsCaptured?: (bounds: GISBounds) => void };
 const INITIAL_VIEW = { center: [24.0316, 49.8429] as [number, number], zoom: 12, bearing: 0, pitch: 0 };
 const BASEMAP_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 
-export function MapCanvas({ cameraCommand, projection, registry, onFeatureSelect }: Props) {
+export function MapCanvas({ cameraCommand, projection, registry, onFeatureSelect, onBoundsCaptured }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const registryRef = useRef(registry);
   const projectionRef = useRef(projection);
   const selectionRef = useRef(onFeatureSelect);
+  const boundsCapturedRef = useRef(onBoundsCaptured);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,6 +34,10 @@ export function MapCanvas({ cameraCommand, projection, registry, onFeatureSelect
   useEffect(() => {
     selectionRef.current = onFeatureSelect;
   }, [onFeatureSelect]);
+
+  useEffect(() => {
+    boundsCapturedRef.current = onBoundsCaptured;
+  }, [onBoundsCaptured]);
 
   useEffect(() => {
     let cancelled = false;
@@ -94,6 +99,10 @@ export function MapCanvas({ cameraCommand, projection, registry, onFeatureSelect
     if (cameraCommand.type === "zoom-out") map.zoomOut();
     if (cameraCommand.type === "reset") map.easeTo(INITIAL_VIEW);
     if (cameraCommand.type === "fit-bounds") map.fitBounds([...cameraCommand.bounds], { padding: 64, duration: 700 });
+    if (cameraCommand.type === "capture-bounds") {
+      const bounds = map.getBounds();
+      boundsCapturedRef.current?.([bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()]);
+    }
   }, [cameraCommand]);
 
   return <><div ref={containerRef} className="map-canvas" aria-label="Interactive map" />{isLoading && <div className="map-status">Loading map…</div>}{error && <div className="map-status" role="alert">{error}</div>}</>;

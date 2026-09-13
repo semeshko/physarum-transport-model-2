@@ -39,7 +39,7 @@ export type GISFeature = {
 };
 
 export type GISDatasetSource = {
-  readonly kind: "bundled" | "file";
+  readonly kind: "bundled" | "file" | "osm";
   readonly name: string;
 };
 

@@ -1,0 +1,14 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    { "type": "Feature", "id": "road-main", "properties": { "name": "Central Avenue", "highway": "primary" }, "geometry": { "type": "LineString", "coordinates": [[24.018, 49.842], [24.029, 49.843], [24.041, 49.841], [24.052, 49.845]] } },
+    { "type": "Feature", "id": "road-north", "properties": { "name": "North Street", "highway": "residential" }, "geometry": { "type": "LineString", "coordinates": [[24.028, 49.854], [24.029, 49.843], [24.032, 49.833]] } },
+    { "type": "Feature", "properties": { "name": "Market Street", "highway": "secondary" }, "geometry": { "type": "LineString", "coordinates": [[24.017, 49.849], [24.029, 49.843], [24.043, 49.835]] } },
+    { "type": "Feature", "id": "park-path", "properties": { "name": "Park Walk", "highway": "footway" }, "geometry": { "type": "LineString", "coordinates": [[24.036, 49.849], [24.039, 49.847], [24.043, 49.848]] } },
+    { "type": "Feature", "id": "building-a", "properties": { "building": "apartments" }, "geometry": { "type": "Polygon", "coordinates": [[[24.024, 49.846], [24.027, 49.846], [24.027, 49.848], [24.024, 49.848], [24.024, 49.846]]] } },
+    { "type": "Feature", "id": "building-b", "properties": { "building": "commercial" }, "geometry": { "type": "Polygon", "coordinates": [[[24.032, 49.837], [24.035, 49.837], [24.035, 49.839], [24.032, 49.839], [24.032, 49.837]]] } },
+    { "type": "Feature", "id": "building-c", "properties": { "building": "school" }, "geometry": { "type": "Polygon", "coordinates": [[[24.044, 49.841], [24.048, 49.841], [24.048, 49.843], [24.044, 49.843], [24.044, 49.841]]] } },
+    { "type": "Feature", "id": "river", "properties": { "name": "Urban River", "waterway": "river" }, "geometry": { "type": "LineString", "coordinates": [[24.014, 49.835], [24.026, 49.839], [24.038, 49.838], [24.055, 49.833]] } },
+    { "type": "Feature", "id": "green-area", "properties": { "name": "City Park", "leisure": "park" }, "geometry": { "type": "Polygon", "coordinates": [[[24.035, 49.846], [24.045, 49.846], [24.047, 49.851], [24.037, 49.852], [24.035, 49.846]]] } }
+  ]
+}

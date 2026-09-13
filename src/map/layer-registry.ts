@@ -1,7 +1,10 @@
-import type { GeoJSONSourceSpecification, LineLayerSpecification, Map as MapLibreMap } from "maplibre-gl";
+import type { CircleLayerSpecification, FillLayerSpecification, GeoJSONSource, GeoJSONSourceSpecification, LayerSpecification, LineLayerSpecification, Map as MapLibreMap } from "maplibre-gl";
 
 export type SourceRegistration = { id: string; definition: GeoJSONSourceSpecification };
-export type LayerRegistration = { id: string; type: "line"; source: string; visible: boolean; paint: NonNullable<LineLayerSpecification["paint"]>; layout?: Omit<NonNullable<LineLayerSpecification["layout"]>, "visibility"> };
+type RegisteredLineLayer = { id: string; type: "line"; source: string; visible: boolean; paint?: LineLayerSpecification["paint"]; layout?: Omit<NonNullable<LineLayerSpecification["layout"]>, "visibility">; filter?: LineLayerSpecification["filter"] };
+type RegisteredFillLayer = { id: string; type: "fill"; source: string; visible: boolean; paint?: FillLayerSpecification["paint"]; layout?: Omit<NonNullable<FillLayerSpecification["layout"]>, "visibility">; filter?: FillLayerSpecification["filter"] };
+type RegisteredCircleLayer = { id: string; type: "circle"; source: string; visible: boolean; paint?: CircleLayerSpecification["paint"]; layout?: Omit<NonNullable<CircleLayerSpecification["layout"]>, "visibility">; filter?: CircleLayerSpecification["filter"] };
+export type LayerRegistration = RegisteredLineLayer | RegisteredFillLayer | RegisteredCircleLayer;
 export type LayerRegistry = { sources: readonly SourceRegistration[]; layers: readonly LayerRegistration[] };
 
 export function createLayerRegistry(sources: readonly SourceRegistration[], layers: readonly LayerRegistration[]): LayerRegistry {
@@ -20,9 +23,19 @@ export function setLayerVisibility(registry: LayerRegistry, layerId: string, vis
 
 export function installLayerRegistry(map: MapLibreMap, registry: LayerRegistry): void {
   for (const source of registry.sources) if (!map.getSource(source.id)) map.addSource(source.id, source.definition);
-  for (const layer of registry.layers) if (!map.getLayer(layer.id)) map.addLayer({ id: layer.id, type: layer.type, source: layer.source, paint: layer.paint, layout: { ...layer.layout, visibility: layer.visible ? "visible" : "none" } });
+  for (const layer of registry.layers) {
+    if (map.getLayer(layer.id)) continue;
+    const { visible, ...specification } = layer;
+    map.addLayer({ ...specification, layout: { ...layer.layout, visibility: visible ? "visible" : "none" } } as LayerSpecification);
+  }
 }
 
-export function syncLayerVisibility(map: MapLibreMap, registry: LayerRegistry): void {
+export function syncLayerRegistry(map: MapLibreMap, registry: LayerRegistry): void {
+  for (const source of registry.sources) {
+    const existing = map.getSource(source.id) as GeoJSONSource | undefined;
+    if (existing) existing.setData(source.definition.data);
+    else map.addSource(source.id, source.definition);
+  }
+  installLayerRegistry(map, registry);
   for (const layer of registry.layers) if (map.getLayer(layer.id)) map.setLayoutProperty(layer.id, "visibility", layer.visible ? "visible" : "none");
 }

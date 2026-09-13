@@ -2,9 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Map as MapLibreMap, ProjectionSpecification } from "maplibre-gl";
-import { installLayerRegistry, syncLayerVisibility, type LayerRegistry } from "@/map/layer-registry";
+import { installLayerRegistry, syncLayerRegistry, type LayerRegistry } from "@/map/layer-registry";
+import type { GISBounds } from "@/gis/types";
 
-export type CameraCommand = { id: number; type: "zoom-in" | "zoom-out" | "reset" };
+export type CameraCommand =
+  | { id: number; type: "zoom-in" | "zoom-out" | "reset" }
+  | { id: number; type: "fit-bounds"; bounds: GISBounds };
 type Props = { cameraCommand: CameraCommand | null; projection: "mercator" | "globe"; registry: LayerRegistry };
 const INITIAL_VIEW = { center: [24.0316, 49.8429] as [number, number], zoom: 12, bearing: 0, pitch: 0 };
 const BASEMAP_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
@@ -66,7 +69,7 @@ export function MapCanvas({ cameraCommand, projection, registry }: Props) {
     };
   }, []);
 
-  useEffect(() => { const map = mapRef.current; if (map?.isStyleLoaded()) syncLayerVisibility(map, registry); }, [registry]);
+  useEffect(() => { const map = mapRef.current; if (map?.isStyleLoaded()) syncLayerRegistry(map, registry); }, [registry]);
   useEffect(() => {
     const map = mapRef.current;
     if (map?.isStyleLoaded()) map.setProjection({ type: projection } as ProjectionSpecification);
@@ -77,6 +80,7 @@ export function MapCanvas({ cameraCommand, projection, registry }: Props) {
     if (cameraCommand.type === "zoom-in") map.zoomIn();
     if (cameraCommand.type === "zoom-out") map.zoomOut();
     if (cameraCommand.type === "reset") map.easeTo(INITIAL_VIEW);
+    if (cameraCommand.type === "fit-bounds") map.fitBounds([...cameraCommand.bounds], { padding: 64, duration: 700 });
   }, [cameraCommand]);
 
   return <><div ref={containerRef} className="map-canvas" aria-label="Interactive map" />{isLoading && <div className="map-status">Loading map…</div>}{error && <div className="map-status" role="alert">{error}</div>}</>;

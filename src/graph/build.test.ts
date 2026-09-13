@@ -42,8 +42,8 @@ describe("transport graph builder", () => {
   it("normalizes MultiLineString parts and preserves provenance", () => {
     const result = graph([road("multi", [[[24, 49], [24.01, 49]], [[24.01, 49], [24.02, 49]]], "MultiLineString")]);
     expect(result.diagnostics).toMatchObject({ nodeCount: 3, edgeCount: 2 });
-    expect(result.edges.map((edge) => edge.sourcePartIndex)).toEqual([0, 1]);
-    expect(result.edges.every((edge) => edge.sourceFeatureId === "multi")).toBe(true);
+    expect(result.edges.map((edge) => edge.provenance[0].sourcePartIndex)).toEqual([0, 1]);
+    expect(result.edges.every((edge) => edge.provenance[0].sourceFeatureId === "multi")).toBe(true);
   });
 
   it("produces deterministic node and edge IDs", () => {

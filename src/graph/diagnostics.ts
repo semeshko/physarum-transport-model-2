@@ -1,6 +1,6 @@
-import type { GraphDiagnostics, GraphEdge, GraphNode } from "./types";
+import type { GraphCleanupMetrics, GraphDiagnostics, GraphEdge, GraphNode } from "./types";
 
-export function calculateGraphDiagnostics(nodes: readonly GraphNode[], edges: readonly GraphEdge[]): GraphDiagnostics {
+export function calculateGraphDiagnostics(nodes: readonly GraphNode[], edges: readonly GraphEdge[], cleanup: GraphCleanupMetrics): GraphDiagnostics {
   const adjacency = new Map(nodes.map((node) => [node.id, new Set<string>()]));
   for (const edge of edges) {
     adjacency.get(edge.fromNodeId)?.add(edge.toNodeId);
@@ -43,5 +43,6 @@ export function calculateGraphDiagnostics(nodes: readonly GraphNode[], edges: re
       maximum: degrees.length ? Math.max(...degrees) : 0,
       average: degrees.length ? degrees.reduce((sum, degree) => sum + degree, 0) / degrees.length : 0,
     },
+    ...cleanup,
   };
 }

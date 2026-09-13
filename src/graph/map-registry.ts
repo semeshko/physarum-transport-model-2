@@ -17,7 +17,7 @@ export function createTransportWorkspaceRegistry(dataset: GISDataset, graph: Tra
   const gisRegistry = createGISLayerRegistry(dataset, gisVisibility);
   const edgeData = {
     type: "FeatureCollection",
-    features: graph.edges.map((edge) => ({ type: "Feature", id: edge.id, properties: { edgeId: edge.id, sourceFeatureId: edge.sourceFeatureId, lengthMeters: edge.lengthMeters }, geometry: { type: "LineString", coordinates: edge.coordinates } })),
+    features: graph.edges.map((edge) => ({ type: "Feature", id: edge.id, properties: { edgeId: edge.id, sourceFeatureIds: edge.provenance.map((item) => item.sourceFeatureId), lengthMeters: edge.lengthMeters }, geometry: { type: "LineString", coordinates: edge.coordinates } })),
   } as unknown as MapGeoJSON;
   const nodeData = {
     type: "FeatureCollection",

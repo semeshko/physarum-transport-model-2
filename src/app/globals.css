@@ -30,6 +30,19 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .layer-toggle { display: flex; align-items: center; justify-content: space-between; min-height: 2.3rem; border-top: 1px solid var(--panel-border); color: var(--foreground); font-size: 0.78rem; }
 .layer-toggle input { width: 1.15rem; height: 1.15rem; accent-color: var(--accent); }
 .import-error { margin-top: 0.7rem; padding: 0.65rem; border: 1px solid rgba(248, 113, 113, 0.35); border-radius: 0.6rem; background: rgba(127, 29, 29, 0.25); color: #fecaca; font-size: 0.72rem; line-height: 1.4; }
+.scenario-section { margin-top: 0.8rem; padding: 0.7rem; border: 1px solid var(--panel-border); border-radius: 0.65rem; background: rgba(15, 23, 42, 0.72); }
+.scenario-heading { display: flex; align-items: center; justify-content: space-between; font-size: 0.78rem; }
+.scenario-heading span { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+.status-valid { color: #3ee089; }
+.status-invalid { color: #fca5a5; }
+.scenario-stats { display: grid; gap: 0.25rem; margin-top: 0.55rem; color: var(--muted); font-size: 0.7rem; }
+.scenario-stats b { color: var(--foreground); font-weight: 600; }
+.scenario-actions, .penalty-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; margin-top: 0.6rem; }
+.scenario-actions button, .penalty-row button { min-height: 2rem; padding: 0.35rem 0.5rem; border: 1px solid var(--panel-border); border-radius: 0.45rem; background: rgba(30, 41, 59, 0.82); color: var(--foreground); cursor: pointer; font-size: 0.68rem; }
+.scenario-actions button[aria-pressed="true"], .penalty-row button[aria-pressed="true"] { border-color: var(--accent); background: rgba(66, 217, 200, 0.14); color: var(--accent); }
+.penalty-row { grid-template-columns: repeat(4, 1fr); }
+.penalty-row .clear-scenario { grid-column: 1 / -1; color: #fca5a5; }
+.scenario-hint { margin: 0.5rem 0 0 !important; color: var(--muted); font-size: 0.68rem !important; }
 .map-status { position: absolute; z-index: 3; inset: 0; display: grid; place-items: center; padding: 1.5rem; background: var(--background); color: var(--muted); text-align: center; }
 .map-status[role="alert"] { color: #fecaca; }
 @media (max-width: 640px) {

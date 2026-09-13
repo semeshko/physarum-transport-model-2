@@ -1,22 +1,24 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Map as MapLibreMap, ProjectionSpecification } from "maplibre-gl";
+import type { Map as MapLibreMap, MapMouseEvent, ProjectionSpecification } from "maplibre-gl";
 import { installLayerRegistry, syncLayerRegistry, type LayerRegistry } from "@/map/layer-registry";
 import type { GISBounds } from "@/gis/types";
 
 export type CameraCommand =
   | { id: number; type: "zoom-in" | "zoom-out" | "reset" }
   | { id: number; type: "fit-bounds"; bounds: GISBounds };
-type Props = { cameraCommand: CameraCommand | null; projection: "mercator" | "globe"; registry: LayerRegistry };
+export type MapFeatureSelection = { readonly kind: "node" | "edge"; readonly id: string };
+type Props = { cameraCommand: CameraCommand | null; projection: "mercator" | "globe"; registry: LayerRegistry; onFeatureSelect?: (selection: MapFeatureSelection) => void };
 const INITIAL_VIEW = { center: [24.0316, 49.8429] as [number, number], zoom: 12, bearing: 0, pitch: 0 };
 const BASEMAP_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 
-export function MapCanvas({ cameraCommand, projection, registry }: Props) {
+export function MapCanvas({ cameraCommand, projection, registry, onFeatureSelect }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const registryRef = useRef(registry);
   const projectionRef = useRef(projection);
+  const selectionRef = useRef(onFeatureSelect);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -27,6 +29,10 @@ export function MapCanvas({ cameraCommand, projection, registry }: Props) {
   useEffect(() => {
     projectionRef.current = projection;
   }, [projection]);
+
+  useEffect(() => {
+    selectionRef.current = onFeatureSelect;
+  }, [onFeatureSelect]);
 
   useEffect(() => {
     let cancelled = false;
@@ -44,6 +50,13 @@ export function MapCanvas({ cameraCommand, projection, registry }: Props) {
           installLayerRegistry(map, registryRef.current);
           setIsLoading(false);
           if (loadingTimer) clearTimeout(loadingTimer);
+        });
+        map.on("click", (event: MapMouseEvent) => {
+          const features = map.queryRenderedFeatures(event.point, { layers: ["transport-graph-nodes", "transport-graph-edges"] });
+          const nodeId = features.find((feature) => feature.layer.id === "transport-graph-nodes")?.properties?.nodeId;
+          if (typeof nodeId === "string") { selectionRef.current?.({ kind: "node", id: nodeId }); return; }
+          const edgeId = features.find((feature) => feature.layer.id === "transport-graph-edges")?.properties?.edgeId;
+          if (typeof edgeId === "string") selectionRef.current?.({ kind: "edge", id: edgeId });
         });
         loadingTimer = setTimeout(() => {
           if (!cancelled && !map.isStyleLoaded()) {

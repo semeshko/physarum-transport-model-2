@@ -31,7 +31,7 @@ describe("Physarum Worker machine", () => {
 });
 
 describe("Physarum client runtime reducer", () => {
-  const progress = (runId: string, iteration: number): Extract<PhysarumWorkerResponse, { type: "PROGRESS" }> => ({ type: "PROGRESS", runId, state: { networkGraphId: "worker", scenarioId: "scenario", iteration, nodePressures: {}, edgeConductivities: {}, edgeFlows: {}, diagnostics: { iteration, maxDeltaD: 0, totalAbsoluteFlow: 0, sourceFlowBalanceError: 0, sinkFlowBalanceError: 0, maximumKirchhoffResidual: 0 }, converged: false, terminationReason: null, error: null } });
+  const progress = (runId: string, iteration: number): Extract<PhysarumWorkerResponse, { type: "PROGRESS" }> => ({ type: "PROGRESS", runId, state: { networkGraphId: "worker", scenarioId: "scenario", iteration, nodePressures: {}, edgeConductivities: {}, edgeFlows: {}, diagnostics: { iteration, maxDeltaD: 0, totalAbsoluteFlow: 0, sourceFlowBalanceError: 0, sinkFlowBalanceError: 0, maximumKirchhoffResidual: 0, linearSolve: null }, converged: false, terminationReason: null, error: null } });
   it("ignores stale run IDs", () => {
     const running = physarumRuntimeReducer(INITIAL_PHYSARUM_RUNTIME_STATE, { type: "LOCAL_START", runId: "new" });
     expect(physarumRuntimeReducer(running, { type: "WORKER_MESSAGE", message: progress("old", 99) })).toBe(running);

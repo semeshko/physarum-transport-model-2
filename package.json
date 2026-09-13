@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "benchmark:solver": "vite-node scripts/benchmark-solver.ts"
   },
   "dependencies": {
     "maplibre-gl": "^6.9.0",

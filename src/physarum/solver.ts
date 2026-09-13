@@ -1,7 +1,7 @@
 import type { PreparedNetwork } from "../scenario/types";
 import { solveHydraulics } from "./hydraulics";
 import { resolvePhysarumParameters } from "./parameters";
-import type { HydraulicSolution, PhysarumParameters, PhysarumSimulation, PhysarumState } from "./types";
+import type { HydraulicSolution, PhysarumParameters, PhysarumSimulation, PhysarumState, PressureSolverOptions } from "./types";
 import { PhysarumSolverError } from "./types";
 
 function updateConductivities(
@@ -33,7 +33,7 @@ function createState(network: PreparedNetwork, iteration: number, conductivities
     nodePressures: { ...hydraulic.pressures },
     edgeConductivities: { ...conductivities },
     edgeFlows: { ...hydraulic.flows },
-    diagnostics: { iteration, maxDeltaD, totalAbsoluteFlow: hydraulic.totalAbsoluteFlow, sourceFlowBalanceError: hydraulic.sourceFlowBalanceError, sinkFlowBalanceError: hydraulic.sinkFlowBalanceError, maximumKirchhoffResidual: hydraulic.maximumKirchhoffResidual },
+    diagnostics: { iteration, maxDeltaD, totalAbsoluteFlow: hydraulic.totalAbsoluteFlow, sourceFlowBalanceError: hydraulic.sourceFlowBalanceError, sinkFlowBalanceError: hydraulic.sinkFlowBalanceError, maximumKirchhoffResidual: hydraulic.maximumKirchhoffResidual, linearSolve: hydraulic.linearSolve },
     converged,
     terminationReason,
     error: null,
@@ -48,7 +48,7 @@ function initialState(network: PreparedNetwork, parameters: PhysarumParameters):
     nodePressures: {},
     edgeConductivities: Object.fromEntries(network.edges.map((edge) => [edge.graphEdgeId, parameters.initialConductivity])),
     edgeFlows: {},
-    diagnostics: { iteration: 0, maxDeltaD: 0, totalAbsoluteFlow: 0, sourceFlowBalanceError: 0, sinkFlowBalanceError: 0, maximumKirchhoffResidual: 0 },
+    diagnostics: { iteration: 0, maxDeltaD: 0, totalAbsoluteFlow: 0, sourceFlowBalanceError: 0, sinkFlowBalanceError: 0, maximumKirchhoffResidual: 0, linearSolve: null },
     converged: false,
     terminationReason: null,
     error: null,
@@ -63,36 +63,36 @@ function numericFailureState(network: PreparedNetwork, iteration: number, conduc
     nodePressures: {},
     edgeConductivities: { ...conductivities },
     edgeFlows: {},
-    diagnostics: { iteration, maxDeltaD: 0, totalAbsoluteFlow: 0, sourceFlowBalanceError: 0, sinkFlowBalanceError: 0, maximumKirchhoffResidual: 0 },
+    diagnostics: { iteration, maxDeltaD: 0, totalAbsoluteFlow: 0, sourceFlowBalanceError: 0, sinkFlowBalanceError: 0, maximumKirchhoffResidual: 0, linearSolve: null },
     converged: false,
     terminationReason: "numericFailure",
     error: error instanceof Error ? error.message : "Unknown numeric failure.",
   };
 }
 
-export function initializePhysarum(network: PreparedNetwork, parameterOverrides: Partial<PhysarumParameters> = {}): PhysarumSimulation {
+export function initializePhysarum(network: PreparedNetwork, parameterOverrides: Partial<PhysarumParameters> = {}, pressureSolver: PressureSolverOptions = {}): PhysarumSimulation {
   const parameters = resolvePhysarumParameters(parameterOverrides);
-  return { parameters, state: initialState(network, parameters) };
+  return { parameters, pressureSolver, state: initialState(network, parameters) };
 }
 
 export function stepPhysarum(network: PreparedNetwork, simulation: PhysarumSimulation): PhysarumSimulation {
   if (simulation.state.terminationReason !== null) return simulation;
   const iteration = simulation.state.iteration + 1;
   try {
-    const hydraulic = solveHydraulics(network, simulation.state.edgeConductivities);
+    const hydraulic = solveHydraulics(network, simulation.state.edgeConductivities, { ...simulation.pressureSolver, initialPressures: simulation.state.nodePressures });
     const updated = updateConductivities(network, simulation.state.edgeConductivities, hydraulic, simulation.parameters);
-    const finalHydraulic = solveHydraulics(network, updated.conductivities);
+    const finalHydraulic = solveHydraulics(network, updated.conductivities, { ...simulation.pressureSolver, initialPressures: hydraulic.pressures });
     const converged = updated.maxDeltaD < simulation.parameters.convergenceTolerance;
     const reachedLimit = iteration >= simulation.parameters.maxIterations;
     const terminationReason = converged ? "converged" : reachedLimit ? "maxIterations" : null;
-    return { parameters: simulation.parameters, state: createState(network, iteration, updated.conductivities, finalHydraulic, updated.maxDeltaD, converged, terminationReason) };
+    return { parameters: simulation.parameters, pressureSolver: simulation.pressureSolver, state: createState(network, iteration, updated.conductivities, finalHydraulic, updated.maxDeltaD, converged, terminationReason) };
   } catch (error) {
-    return { parameters: simulation.parameters, state: numericFailureState(network, iteration, simulation.state.edgeConductivities, error) };
+    return { parameters: simulation.parameters, pressureSolver: simulation.pressureSolver, state: numericFailureState(network, iteration, simulation.state.edgeConductivities, error) };
   }
 }
 
-export function runPhysarum(network: PreparedNetwork, parameterOverrides: Partial<PhysarumParameters> = {}): PhysarumState {
-  let simulation = initializePhysarum(network, parameterOverrides);
+export function runPhysarum(network: PreparedNetwork, parameterOverrides: Partial<PhysarumParameters> = {}, pressureSolver: PressureSolverOptions = {}): PhysarumState {
+  let simulation = initializePhysarum(network, parameterOverrides, pressureSolver);
   while (simulation.state.terminationReason === null) simulation = stepPhysarum(network, simulation);
   return simulation.state;
 }

@@ -168,6 +168,8 @@ export function MapWorkspace() {
               <span>Scientific termination <b>{physarum.runtime.state.terminationReason ?? "—"}</b></span>
               <span>Max ΔD <b>{physarum.runtime.state.diagnostics.maxDeltaD.toExponential(2)}</b></span>
               <span>Kirchhoff residual <b>{physarum.runtime.state.diagnostics.maximumKirchhoffResidual.toExponential(2)}</b></span>
+              {physarum.runtime.state.diagnostics.linearSolve && <span>Pressure solver <b>{physarum.runtime.state.diagnostics.linearSolve.method === "conjugate-gradient" ? "CG" : "dense"} · {physarum.runtime.state.diagnostics.linearSolve.iterations} iterations</b></span>}
+              {physarum.runtime.state.diagnostics.linearSolve && <span>Linear residual <b>{physarum.runtime.state.diagnostics.linearSolve.residualNorm.toExponential(2)}</b></span>}
               {physarum.runtime.error && <span className="status-invalid">{physarum.runtime.error}</span>}
             </div>}
           </section>

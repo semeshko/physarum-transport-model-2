@@ -14,6 +14,9 @@ export type PhysarumParameters = {
 
 export type PhysarumTerminationReason = "converged" | "maxIterations" | "numericFailure";
 
+export type LinearSolveDiagnostics = { readonly method: "dense" | "conjugate-gradient"; readonly iterations: number; readonly converged: boolean; readonly residualNorm: number; readonly tolerance: number; readonly failureReason: string | null };
+export type PressureSolverOptions = { readonly method?: "dense" | "conjugate-gradient"; readonly relativeTolerance?: number; readonly absoluteTolerance?: number; readonly maxIterations?: number; readonly initialPressures?: Readonly<Record<string, number>> };
+
 export type PhysarumDiagnostics = {
   readonly iteration: number;
   readonly maxDeltaD: number;
@@ -21,6 +24,7 @@ export type PhysarumDiagnostics = {
   readonly sourceFlowBalanceError: number;
   readonly sinkFlowBalanceError: number;
   readonly maximumKirchhoffResidual: number;
+  readonly linearSolve: LinearSolveDiagnostics | null;
 };
 
 export type PhysarumState = {
@@ -38,6 +42,7 @@ export type PhysarumState = {
 
 export type PhysarumSimulation = {
   readonly parameters: PhysarumParameters;
+  readonly pressureSolver: PressureSolverOptions;
   readonly state: PhysarumState;
 };
 
@@ -49,6 +54,7 @@ export type HydraulicSolution = {
   readonly sourceFlowBalanceError: number;
   readonly sinkFlowBalanceError: number;
   readonly totalAbsoluteFlow: number;
+  readonly linearSolve: LinearSolveDiagnostics;
 };
 
 export type PhysarumRunInput = { readonly network: PreparedNetwork; readonly parameters?: Partial<PhysarumParameters> };

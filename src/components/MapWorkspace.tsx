@@ -22,6 +22,8 @@ import { createEmptyScenario, setEdgePenalty, setTerminal, setTransportProfile, 
 import type { AnalysisScenario } from "@/scenario/types";
 import { applyTransportProfile } from "@/transport-profile/profile";
 import { TRANSPORT_PROFILE_IDS, type TransportProfileId } from "@/transport-profile/types";
+import { applyGeneralizedCosts } from "@/transport-cost/model";
+import { addTransportCostsToRegistry } from "@/transport-cost/map-registry";
 import { MapCanvas, type CameraCommand, type MapFeatureSelection } from "./MapCanvas";
 
 const initialDataset = ingestGeoJSON(sampleUrban, { name: "Synthetic urban sample", source: { kind: "bundled", name: "sample-urban.json" } });
@@ -35,6 +37,7 @@ export function MapWorkspace() {
   const [dataset, setDataset] = useState<GISDataset>(initialDataset);
   const [visibility, setVisibility] = useState<GISLayerVisibility>(DEFAULT_GIS_LAYER_VISIBILITY);
   const [graphVisibility, setGraphVisibility] = useState<GraphLayerVisibility>(DEFAULT_GRAPH_LAYER_VISIBILITY);
+  const [costVisible, setCostVisible] = useState(false);
   const [projection, setProjection] = useState<"mercator" | "globe">("mercator");
   const [cameraCommand, setCameraCommand] = useState<CameraCommand | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
@@ -56,15 +59,17 @@ export function MapWorkspace() {
     catch (error) { return { graph: null, error: error instanceof Error ? error.message : "Graph extraction failed.", buildMilliseconds: performance.now() - started }; }
   }, [dataset]);
   const profiled = useMemo(() => graphResult.graph ? applyTransportProfile(graphResult.graph, scenario.transportProfileId) : null, [graphResult.graph, scenario.transportProfileId]);
-  const prepared = useMemo(() => graphResult.graph && profiled ? prepareNetwork(graphResult.graph, scenario, profiled) : null, [graphResult.graph, profiled, scenario]);
+  const costed = useMemo(() => profiled ? applyGeneralizedCosts(profiled) : null, [profiled]);
+  const prepared = useMemo(() => graphResult.graph && profiled && costed ? prepareNetwork(graphResult.graph, scenario, profiled, costed) : null, [costed, graphResult.graph, profiled, scenario]);
   const registry = useMemo(() => {
     if (!graphResult.graph) return null;
     if (!profiled) return null;
     const base = createTransportWorkspaceRegistry(dataset, graphResult.graph, profiled, visibility, graphVisibility);
-    const withScenario = addScenarioToRegistry(base, graphResult.graph, scenario);
+    const withCosts = costed ? addTransportCostsToRegistry(base, costed, costVisible) : base;
+    const withScenario = addScenarioToRegistry(withCosts, graphResult.graph, scenario);
     const withResult = addPhysarumResultToRegistry(withScenario, graphResult.graph, physarum.runtime.state);
     return addOSMAreaToRegistry(withResult, osmBounds);
-  }, [dataset, graphResult.graph, graphVisibility, osmBounds, physarum.runtime.state, profiled, scenario, visibility]);
+  }, [costVisible, costed, dataset, graphResult.graph, graphVisibility, osmBounds, physarum.runtime.state, profiled, scenario, visibility]);
 
   useEffect(() => () => osmRequestRef.current?.abort(), []);
 
@@ -201,7 +206,7 @@ export function MapWorkspace() {
             <span>OSM ways <b>{osmSummary.wayCount}</b> · Skipped <b>{osmSummary.skippedElementCount}</b></span>
             <span>Missing topology anchors <b>{osmSummary.missingTopologyWayCount}</b></span>
             <span>Fetch <b>{osmSummary.fetchMilliseconds.toFixed(0)} ms</b> · Adapter <b>{osmSummary.adapterMilliseconds.toFixed(1)} ms</b></span>
-            <span>Graph build <b>{graphResult.buildMilliseconds.toFixed(1)} ms</b></span>
+            <span>Graph build <b suppressHydrationWarning>{graphResult.buildMilliseconds.toFixed(1)} ms</b></span>
           </div>}
         </section>
         <section className="dataset-summary" aria-label="Dataset summary">
@@ -223,7 +228,7 @@ export function MapWorkspace() {
             <span>Merged {graphResult.graph.diagnostics.duplicateEdgesMerged} duplicates · Resolved {graphResult.graph.diagnostics.collinearOverlapsResolved} overlaps</span>
             <span>Ignored {graphResult.graph.diagnostics.gradeSeparatedCrossingsIgnored} grade-separated crossings · Rejected {graphResult.graph.diagnostics.zeroLengthEdgesRejected + graphResult.graph.diagnostics.selfLoopsRejected + graphResult.graph.diagnostics.invalidSegmentsRejected} invalid edges</span>
             <span>Snap tolerance {graphResult.graph.snapToleranceDegrees}° · Length meters</span>
-            <span>Build time {graphResult.buildMilliseconds.toFixed(1)} ms</span>
+            <span suppressHydrationWarning>Build time {graphResult.buildMilliseconds.toFixed(1)} ms</span>
           </section>
         )}
         {graphResult.error && <div className="import-error" role="alert">{graphResult.error}</div>}
@@ -238,6 +243,7 @@ export function MapWorkspace() {
             <span>Physical <b>{profiled.accessDiagnostics.physicalEdgeCount}</b> · Allowed <b>{profiled.accessDiagnostics.allowedEdgeCount}</b> · Restricted <b>{profiled.accessDiagnostics.restrictedEdgeCount}</b> · Denied <b>{profiled.accessDiagnostics.deniedEdgeCount}</b> · Conditional <b>{profiled.accessDiagnostics.conditionalAccessExcluded}</b></span>
             <span>Explicitly allowed <b>{profiled.accessDiagnostics.explicitlyAllowed}</b> · Provenance conflicts <b>{profiled.accessDiagnostics.conflictingProvenance}</b></span>
             <span>One-way tagged edges <b>{profiled.accessDiagnostics.onewayTaggedNotEnforced}</b>. One-way restrictions are not yet enforced.</span>
+            {costed && <><span>Cost model <b>profile travel-time impedance</b></span><span>Median edge <b>{costed.diagnostics.medianTravelTimeSeconds.toFixed(1)} s</b> · Median <b>{costed.diagnostics.medianCostPerMeter.toFixed(3)} s/m</b></span><span>Explicit speed <b>{costed.diagnostics.explicitSpeedCount}</b> · Fallback speed <b>{costed.diagnostics.fallbackSpeedCount}</b> · Surface <b>{costed.diagnostics.surfaceTaggedCount}</b> · Smoothness <b>{costed.diagnostics.smoothnessTaggedCount}</b></span></>}
           </div>
         </section>}
         {prepared && (
@@ -298,6 +304,7 @@ export function MapWorkspace() {
           <legend>Graph diagnostics</legend>
           <label className="layer-toggle"><span>Graph edges</span><input type="checkbox" checked={graphVisibility.edges} onChange={(event) => setGraphVisibility((current) => ({ ...current, edges: event.target.checked }))} /></label>
           <label className="layer-toggle"><span>Graph nodes</span><input type="checkbox" checked={graphVisibility.nodes} onChange={(event) => setGraphVisibility((current) => ({ ...current, nodes: event.target.checked }))} /></label>
+          <label className="layer-toggle"><span>Profile cost</span><input type="checkbox" checked={costVisible} onChange={(event) => setCostVisible(event.target.checked)} /></label>
         </fieldset>
         {importError && <div className="import-error" role="alert">{importError}</div>}
       </aside>

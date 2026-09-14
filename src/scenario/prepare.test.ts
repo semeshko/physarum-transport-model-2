@@ -77,7 +77,8 @@ describe("scenario preparation", () => {
   it("applies a soft multiplier to effective cost", () => {
     const transportGraph = graph();
     const result = prepareNetwork(transportGraph, setEdgePenalty(validScenario(), "edge-1", 2));
-    expect(result.network?.edges.find((edge) => edge.graphEdgeId === "edge-1")?.effectiveCost).toBeCloseTo(transportGraph.edges[0].lengthMeters * 2);
+    const edge = result.network?.edges.find((item) => item.graphEdgeId === "edge-1");
+    expect(edge?.effectiveCost).toBeCloseTo(edge!.profileCostSeconds! * 2);
   });
 
   it("rejects multipliers below one", () => {
@@ -102,7 +103,7 @@ describe("scenario preparation", () => {
   });
 
   it("creates a predictable empty and reset scenario", () => {
-    expect(createEmptyScenario()).toEqual({ id: "scenario-1", name: "Untitled scenario", transportProfileId: "pedestrian", terminals: [], edgeConstraints: [], costModel: { kind: "length-meters" } });
+    expect(createEmptyScenario()).toEqual({ id: "scenario-1", name: "Untitled scenario", transportProfileId: "pedestrian", terminals: [], edgeConstraints: [], costModel: { kind: "profile-time-seconds" } });
     expect(prepareNetwork(graph(), createEmptyScenario()).validation).toMatchObject({ valid: false, activeEdgeCount: 2, blockedEdgeCount: 0, penalizedEdgeCount: 0 });
   });
 

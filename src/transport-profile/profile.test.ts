@@ -115,7 +115,8 @@ describe("profiled scenario preparation", () => {
 
   it("applies hard blocks and soft penalties after profile filtering", () => {
     const profiled = applyTransportProfile(base, "pedestrian"); const edge = profiled.usableEdges[0]; let scenario = createEmptyScenario(); scenario = setTerminal(setTerminal(scenario, "source", edge.fromNodeId), "sink", edge.toNodeId);
-    expect(prepareNetwork(base, setEdgePenalty(scenario, edge.id, 2), profiled).network?.edges[0].effectiveCost).toBeCloseTo(edge.lengthMeters * 2);
+    const prepared = prepareNetwork(base, setEdgePenalty(scenario, edge.id, 2), profiled).network?.edges[0];
+    expect(prepared?.effectiveCost).toBeCloseTo(prepared!.profileCostSeconds! * 2);
     expect(prepareNetwork(base, toggleBlockedEdge(scenario, edge.id), profiled).validation.sourceSinkConnectedAfterConstraints).toBe(false);
   });
 

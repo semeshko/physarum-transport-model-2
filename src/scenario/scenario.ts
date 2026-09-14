@@ -4,7 +4,7 @@ import type { TransportProfileId } from "../transport-profile/types";
 export const DEFAULT_TERMINAL_MAGNITUDE = 1;
 
 export function createEmptyScenario(id = "scenario-1", name = "Untitled scenario"): AnalysisScenario {
-  return { id, name, transportProfileId: "pedestrian", terminals: [], edgeConstraints: [], costModel: { kind: "length-meters" } };
+  return { id, name, transportProfileId: "pedestrian", terminals: [], edgeConstraints: [], costModel: { kind: "profile-time-seconds" } };
 }
 
 export function setTransportProfile(scenario: AnalysisScenario, transportProfileId: TransportProfileId): AnalysisScenario {

@@ -17,7 +17,7 @@ export type ScenarioEdgeConstraint = {
   readonly penaltyMultiplier: number;
 };
 
-export type EdgeCostModel = { readonly kind: "length-meters" };
+export type EdgeCostModel = { readonly kind: "profile-time-seconds" };
 
 export type AnalysisScenario = {
   readonly id: string;
@@ -60,6 +60,7 @@ export type PreparedEdge = {
   readonly fromNodeId: string;
   readonly toNodeId: string;
   readonly lengthMeters: number;
+  readonly profileCostSeconds?: number;
   readonly penaltyMultiplier: number;
   readonly effectiveCost: number;
 };

@@ -1,6 +1,8 @@
 import type { GraphEdge, TransportGraph } from "../graph/types";
 import { applyTransportProfile } from "../transport-profile/profile";
 import type { ProfiledTransportNetwork } from "../transport-profile/types";
+import { applyGeneralizedCosts } from "../transport-cost/model";
+import type { CostedTransportNetwork } from "../transport-cost/types";
 import type { AnalysisScenario, PreparedEdge, PreparedNetworkResult, ScenarioValidation, ScenarioValidationIssue } from "./types";
 
 function terminalsConnected(graph: TransportGraph, terminalNodeIds: readonly string[], usableEdges: readonly GraphEdge[]): boolean | null {
@@ -21,9 +23,11 @@ function terminalsConnected(graph: TransportGraph, terminalNodeIds: readonly str
   return terminalNodeIds.every((nodeId) => visited.has(nodeId));
 }
 
-export function prepareNetwork(graph: TransportGraph, scenario: AnalysisScenario, suppliedProfiledNetwork?: ProfiledTransportNetwork): PreparedNetworkResult {
+export function prepareNetwork(graph: TransportGraph, scenario: AnalysisScenario, suppliedProfiledNetwork?: ProfiledTransportNetwork, suppliedCostedNetwork?: CostedTransportNetwork): PreparedNetworkResult {
   const profiled = suppliedProfiledNetwork ?? applyTransportProfile(graph, scenario.transportProfileId);
   if (profiled.graphId !== graph.id || profiled.profileId !== scenario.transportProfileId) throw new Error("Profiled network does not match the graph and scenario profile.");
+  const costed = suppliedCostedNetwork ?? applyGeneralizedCosts(profiled);
+  if (costed.graphId !== graph.id || costed.profileId !== scenario.transportProfileId) throw new Error("Costed network does not match the graph and scenario profile.");
   const issues: ScenarioValidationIssue[] = [];
   const nodeIds = new Set(graph.nodes.map((node) => node.id));
   const edgeIds = new Set(graph.edges.map((edge) => edge.id));
@@ -73,9 +77,11 @@ export function prepareNetwork(graph: TransportGraph, scenario: AnalysisScenario
   if (!validation.valid) return { network: null, validation };
 
   const constraints = new Map(scenario.edgeConstraints.map((constraint) => [constraint.edgeId, constraint]));
+  const costs = new Map(costed.edges.map((item) => [item.edge.id, item.cost.generalizedCostSeconds]));
   const edges: PreparedEdge[] = usableGraphEdges.map((edge) => {
     const penaltyMultiplier = constraints.get(edge.id)?.penaltyMultiplier ?? 1;
-    return { graphEdgeId: edge.id, fromNodeId: edge.fromNodeId, toNodeId: edge.toNodeId, lengthMeters: edge.lengthMeters, penaltyMultiplier, effectiveCost: edge.lengthMeters * penaltyMultiplier };
+    const profileCostSeconds = costs.get(edge.id); if (!profileCostSeconds || !Number.isFinite(profileCostSeconds)) throw new Error(`Missing finite generalized cost for edge ${edge.id}.`);
+    return { graphEdgeId: edge.id, fromNodeId: edge.fromNodeId, toNodeId: edge.toNodeId, lengthMeters: edge.lengthMeters, profileCostSeconds, penaltyMultiplier, effectiveCost: profileCostSeconds * penaltyMultiplier };
   });
   return {
     validation,

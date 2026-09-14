@@ -21,8 +21,8 @@ export function classifyFeature(properties: GISProperties): GISCategory {
   const declaredCategory = property(properties, "category") ?? property(properties, "kind");
   if (declaredCategory === "road" || declaredCategory === "path") return declaredCategory;
   if (property(properties, "building")) return "building";
-  if (property(properties, "waterway") || property(properties, "natural") === "water") return "water";
+  if (property(properties, "waterway") || property(properties, "natural") === "water" || property(properties, "water")) return "water";
   if (property(properties, "railway")) return "railway";
-  if (property(properties, "leisure") === "park" || GREEN_LANDUSES.has(property(properties, "landuse") ?? "")) return "green";
+  if (property(properties, "leisure") === "park" || property(properties, "natural") === "wood" || GREEN_LANDUSES.has(property(properties, "landuse") ?? "")) return "green";
   return "unknown";
 }

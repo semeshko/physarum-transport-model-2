@@ -1,0 +1,22 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    { "type": "Feature", "id": "road-through-building", "properties": { "highway": "residential" }, "geometry": { "type": "LineString", "coordinates": [[0, 0], [10, 0]] } },
+    { "type": "Feature", "id": "building-passage", "properties": { "highway": "service", "tunnel": "building_passage" }, "geometry": { "type": "LineString", "coordinates": [[0, 2], [10, 2]] } },
+    { "type": "Feature", "id": "road-boundary", "properties": { "highway": "residential" }, "geometry": { "type": "LineString", "coordinates": [[0, 4], [10, 4]] } },
+    { "type": "Feature", "id": "road-outside", "properties": { "highway": "residential" }, "geometry": { "type": "LineString", "coordinates": [[0, 6], [10, 6]] } },
+    { "type": "Feature", "id": "road-water", "properties": { "highway": "residential" }, "geometry": { "type": "LineString", "coordinates": [[12, 0], [22, 0]] } },
+    { "type": "Feature", "id": "water-bridge", "properties": { "highway": "primary", "bridge": "yes", "layer": "1" }, "geometry": { "type": "LineString", "coordinates": [[12, 2], [22, 2]] } },
+    { "type": "Feature", "id": "water-tunnel", "properties": { "highway": "primary", "tunnel": "yes", "layer": "-1" }, "geometry": { "type": "LineString", "coordinates": [[12, 4], [22, 4]] } },
+    { "type": "Feature", "id": "green-full", "properties": { "highway": "footway" }, "geometry": { "type": "LineString", "coordinates": [[24, 0], [34, 0]] } },
+    { "type": "Feature", "id": "green-partial", "properties": { "highway": "footway" }, "geometry": { "type": "LineString", "coordinates": [[24, 2], [34, 2]] } },
+    { "type": "Feature", "id": "building", "properties": { "building": "yes" }, "geometry": { "type": "Polygon", "coordinates": [[[3, -1], [7, -1], [7, 4], [3, 4], [3, -1]]] } },
+    { "type": "Feature", "id": "water", "properties": { "natural": "water", "water": "river" }, "geometry": { "type": "Polygon", "coordinates": [[[15, -1], [19, -1], [19, 5], [15, 5], [15, -1]]] } },
+    { "type": "Feature", "id": "green", "properties": { "leisure": "park" }, "geometry": { "type": "Polygon", "coordinates": [[[23, -1], [30, -1], [30, 3], [23, 3], [23, -1]]] } },
+    { "type": "Feature", "id": "green-overlap", "properties": { "landuse": "grass" }, "geometry": { "type": "Polygon", "coordinates": [[[26, -1], [32, -1], [32, 3], [26, 3], [26, -1]]] } },
+    { "type": "Feature", "id": "green-hard-overlap", "properties": { "landuse": "meadow" }, "geometry": { "type": "Polygon", "coordinates": [[[1, -0.5], [5, -0.5], [5, 0.5], [1, 0.5], [1, -0.5]]] } },
+    { "type": "Feature", "id": "green-multi", "properties": { "natural": "wood" }, "geometry": { "type": "MultiPolygon", "coordinates": [[[[40, -1], [42, -1], [42, 1], [40, 1], [40, -1]]], [[[44, -1], [46, -1], [46, 1], [44, 1], [44, -1]]]] } },
+    { "type": "Feature", "id": "stream-context", "properties": { "waterway": "stream" }, "geometry": { "type": "LineString", "coordinates": [[0, 8], [10, 8]] } },
+    { "type": "Feature", "id": "unknown-landuse", "properties": { "landuse": "residential" }, "geometry": { "type": "Polygon", "coordinates": [[[50, 0], [51, 0], [51, 1], [50, 1], [50, 0]]] } }
+  ]
+}

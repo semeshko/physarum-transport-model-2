@@ -1,0 +1,31 @@
+import { describe, expect, it } from "vitest";
+import fixture from "../data/spatial-calibration.json";
+import { buildTransportGraph } from "../graph/build";
+import { ingestGeoJSON } from "../gis/ingest";
+import { setEdgePenalty, setTerminal, createEmptyScenario } from "../scenario/scenario";
+import { prepareNetwork } from "../scenario/prepare";
+import { applyGeneralizedCosts } from "../transport-cost/model";
+import { applyTransportProfile } from "../transport-profile/profile";
+import { relateSegmentToPolygons } from "./geometry";
+import { applySpatialConstraints, createSpatialConstraintSet } from "./model";
+
+const dataset = () => ingestGeoJSON(fixture, { name: "spatial-calibration.json", source: { kind: "bundled", name: "spatial-calibration.json" } });
+function network(green = true) { const gis = dataset(); const graph = buildTransportGraph(gis); const profiled = applyTransportProfile(graph, "pedestrian"); const costed = applyGeneralizedCosts(profiled); return { gis, graph, profiled, costed, spatial: applySpatialConstraints(costed, createSpatialConstraintSet(gis), { buildings: true, water: true, green, greenMultiplier: 1.025 }) }; }
+function edgeBySource(value: ReturnType<typeof network>, source: string) { return value.spatial.edges.find((item) => item.costedEdge.edge.provenance.some((entry) => entry.sourceFeatureId === source))!; }
+
+describe("spatial urban constraints", () => {
+  it("classifies explicit urban context and keeps non-polygon water context-only", () => { const set = createSpatialConstraintSet(dataset()); expect(set.counts).toEqual({ building: 1, water: 2, green: 4 }); expect(set.warnings).toEqual([expect.stringContaining("stream-context")]); });
+  it("does not mutate GIS, graph, or costed inputs", () => { const value = network(); const snapshots = [JSON.stringify(value.gis), JSON.stringify(value.graph), JSON.stringify(value.costed)]; applySpatialConstraints(value.costed, createSpatialConstraintSet(value.gis)); expect([JSON.stringify(value.gis), JSON.stringify(value.graph), JSON.stringify(value.costed)]).toEqual(snapshots); });
+  it("hard-excludes a road through a building", () => { const edge = edgeBySource(network(), "road-through-building"); expect(edge.hardExcluded).toBe(true); expect(edge.impacts.find((impact) => impact.category === "building")).toMatchObject({ effect: "hard", relation: "intersects" }); });
+  it("does not exclude boundary contact or outside roads", () => { const value = network(); expect(edgeBySource(value, "road-boundary")).toMatchObject({ hardExcluded: false, impacts: [{ relation: "boundary-touch", effect: "context" }] }); expect(edgeBySource(value, "road-outside").impacts).toHaveLength(0); });
+  it("preserves a tagged building passage", () => { expect(edgeBySource(network(), "building-passage")).toMatchObject({ hardExcluded: false, impacts: [{ exception: "building-passage", effect: "context" }] }); });
+  it("hard-excludes water crossings but preserves bridges and tunnels", () => { const value = network(); expect(edgeBySource(value, "road-water").hardExcluded).toBe(true); expect(edgeBySource(value, "water-bridge").impacts[0].exception).toBe("bridge"); expect(edgeBySource(value, "water-tunnel").impacts[0].exception).toBe("tunnel"); });
+  it("keeps green context disabled by default and enables conservative soft costs", () => { const off = network(false), on = network(true); expect(edgeBySource(off, "green-full").spatialMultiplier).toBe(1); expect(edgeBySource(on, "green-full").spatialMultiplier).toBeCloseTo(1.015); });
+  it("uses affected length fraction deterministically", () => { const edge = edgeBySource(network(), "green-partial"); const impact = edge.impacts.find((item) => item.category === "green")!; expect(impact.affectedFraction).toBeCloseTo(0.6); expect(impact.multiplier).toBeCloseTo(1.015); });
+  it("bounds multiple soft polygons with maximum composition", () => { const edge = edgeBySource(network(), "green-full"); const factors = edge.impacts.filter((item) => item.effect === "soft").map((item) => item.multiplier); expect(edge.spatialMultiplier).toBe(Math.max(...factors)); expect(edge.spatialMultiplier).toBeLessThanOrEqual(1.025); });
+  it("gives hard effects precedence over soft effects", () => { const edge = edgeBySource(network(), "road-through-building"); expect(edge.impacts.some((impact) => impact.effect === "hard")).toBe(true); expect(edge.impacts.some((impact) => impact.effect === "soft")).toBe(true); expect(edge.hardExcluded).toBe(true); });
+  it("supports MultiPolygon segment portions", () => { const result = relateSegmentToPolygons([39,0], [47,0], fixture.features.find((item) => item.id === "green-multi")!.geometry.coordinates as never); expect(result).toMatchObject({ relation: "intersects", affectedFraction: 0.5 }); });
+  it("removes spatially excluded edges before scenario preparation and applies scenario cost last", () => { const value = network(); const usable = value.spatial.edges.find((item) => !item.hardExcluded && item.spatialMultiplier > 1)!; let scenario = setTerminal(setTerminal(createEmptyScenario(), "source", usable.costedEdge.edge.fromNodeId), "sink", usable.costedEdge.edge.toNodeId); scenario = setEdgePenalty(scenario, usable.costedEdge.edge.id, 2); const prepared = prepareNetwork(value.graph, scenario, value.profiled, value.costed, value.spatial); expect(prepared.network?.edges.some((edge) => edge.graphEdgeId === edgeBySource(value, "road-through-building").costedEdge.edge.id)).toBe(false); const edge = prepared.network?.edges.find((item) => item.graphEdgeId === usable.costedEdge.edge.id); expect(edge?.effectiveCost).toBeCloseTo(usable.spatialCostSeconds * 2); });
+  it("reports deterministic structural QA", () => { const first = network().spatial.diagnostics, second = network().spatial.diagnostics; expect({ ...first, evaluationMilliseconds: 0 }).toEqual({ ...second, evaluationMilliseconds: 0 }); expect(first.relationTestCount).toBeLessThan(first.edgeCount * first.polygonCount); });
+  it("generic GeoJSON ingestion and pre-spatial generalized costs remain stable", () => { const value = network(); expect(value.gis.featureCount).toBe(fixture.features.length); expect(value.costed.edges.every((item) => item.cost.generalizedCostSeconds > 0)).toBe(true); });
+});

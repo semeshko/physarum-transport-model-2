@@ -17,4 +17,7 @@ export type OSMImportSummary = {
   readonly adapterMilliseconds: number;
   readonly warnings: readonly string[];
   readonly missingTopologyWayCount: number;
+  readonly urbanFeatureCount: number;
+  readonly urbanPolygonCount: number;
+  readonly urbanContextWarning: string | null;
 };

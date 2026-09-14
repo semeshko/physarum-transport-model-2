@@ -15,10 +15,16 @@ export function createOverpassQuery(bounds: GISBounds): string {
   return `[out:json][timeout:20];way["highway"~"^(${INCLUDED_HIGHWAYS})$"]["area"!="yes"](${south},${west},${north},${east});out body geom;`;
 }
 
+export function createUrbanContextQuery(bounds: GISBounds): string {
+  validateOSMArea(bounds);
+  const [west, south, east, north] = bounds;
+  const bbox = `${south},${west},${north},${east}`;
+  return `[out:json][timeout:20];(way["building"](${bbox});way["natural"="water"](${bbox});way["water"](${bbox});way["waterway"](${bbox});way["leisure"="park"](${bbox});way["natural"="wood"](${bbox});way["landuse"~"^(forest|grass|meadow|recreation_ground|village_green)$"](${bbox}););out body geom;`;
+}
+
 type RequestOptions = { readonly signal?: AbortSignal; readonly fetchImplementation?: typeof fetch; readonly timeoutMilliseconds?: number };
 
-export async function fetchOSMTransport(bounds: GISBounds, options: RequestOptions = {}): Promise<unknown> {
-  const query = createOverpassQuery(bounds);
+async function fetchOverpass(bounds: GISBounds, query: string, emptyMessage: string, options: RequestOptions): Promise<unknown> {
   const controller = new AbortController();
   let timedOut = false;
   const abortFromCaller = () => controller.abort();
@@ -39,7 +45,7 @@ export async function fetchOSMTransport(bounds: GISBounds, options: RequestOptio
         const payload: unknown = await response.json();
         const root = payload !== null && typeof payload === "object" ? payload as { elements?: unknown } : null;
         if (!root || !Array.isArray(root.elements)) throw new OSMRequestError("remote", "The OSM service returned malformed data.");
-        if (root.elements.length === 0) throw new OSMRequestError("empty", "No supported OSM roads or paths were found in the selected area.");
+        if (root.elements.length === 0) throw new OSMRequestError("empty", emptyMessage);
         if (root.elements.length > OSM_AREA_LIMITS.maximumWays) throw new OSMRequestError("oversized", `The area returned more than ${OSM_AREA_LIMITS.maximumWays.toLocaleString()} ways. Select a smaller area.`);
         return payload;
       } catch (error) {
@@ -61,3 +67,6 @@ export async function fetchOSMTransport(bounds: GISBounds, options: RequestOptio
     options.signal?.removeEventListener("abort", abortFromCaller);
   }
 }
+
+export async function fetchOSMTransport(bounds: GISBounds, options: RequestOptions = {}): Promise<unknown> { return fetchOverpass(bounds, createOverpassQuery(bounds), "No supported OSM roads or paths were found in the selected area.", options); }
+export async function fetchOSMUrbanContext(bounds: GISBounds, options: RequestOptions = {}): Promise<unknown> { return fetchOverpass(bounds, createUrbanContextQuery(bounds), "No supported OSM urban context was found in the selected area.", options); }

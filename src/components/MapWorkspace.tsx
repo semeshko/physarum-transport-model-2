@@ -11,9 +11,9 @@ import type { GISBounds, GISDataset } from "@/gis/types";
 import { usePhysarumRuntime } from "@/hooks/usePhysarumRuntime";
 import { addPhysarumResultToRegistry } from "@/physarum/map-registry";
 import { DEFAULT_PHYSARUM_PARAMETERS } from "@/physarum/parameters";
-import { overpassResponseToGeoJSON } from "@/osm/adapter";
+import { overpassResponseToGeoJSON, overpassUrbanContextToGeoJSON } from "@/osm/adapter";
 import { formatOSMBounds, measureOSMArea, validateOSMArea } from "@/osm/area";
-import { fetchOSMTransport, OSMRequestError } from "@/osm/client";
+import { fetchOSMTransport, fetchOSMUrbanContext, OSMRequestError } from "@/osm/client";
 import { addOSMAreaToRegistry } from "@/osm/map-registry";
 import type { OSMImportSummary } from "@/osm/types";
 import { addScenarioToRegistry } from "@/scenario/map-registry";
@@ -25,6 +25,10 @@ import { TRANSPORT_PROFILE_IDS, type TransportProfileId } from "@/transport-prof
 import { applyGeneralizedCosts } from "@/transport-cost/model";
 import { addTransportCostsToRegistry } from "@/transport-cost/map-registry";
 import { createCostQAReport, serializeCostQAReport } from "@/transport-cost/qa";
+import { applySpatialConstraints, createSpatialConstraintSet } from "@/spatial-constraints/model";
+import { addSpatialImpactsToRegistry } from "@/spatial-constraints/map-registry";
+import { DEFAULT_SPATIAL_POLICY, type SpatialConstraintPolicy } from "@/spatial-constraints/types";
+import { createSpatialQAReport, serializeSpatialQAReport } from "@/spatial-constraints/qa";
 import { MapCanvas, type CameraCommand, type MapFeatureSelection } from "./MapCanvas";
 
 const initialDataset = ingestGeoJSON(sampleUrban, { name: "Synthetic urban sample", source: { kind: "bundled", name: "sample-urban.json" } });
@@ -39,6 +43,8 @@ export function MapWorkspace() {
   const [visibility, setVisibility] = useState<GISLayerVisibility>(DEFAULT_GIS_LAYER_VISIBILITY);
   const [graphVisibility, setGraphVisibility] = useState<GraphLayerVisibility>(DEFAULT_GRAPH_LAYER_VISIBILITY);
   const [costVisible, setCostVisible] = useState(false);
+  const [spatialPolicy, setSpatialPolicy] = useState<SpatialConstraintPolicy>(DEFAULT_SPATIAL_POLICY);
+  const [spatialVisible, setSpatialVisible] = useState(true);
   const [projection, setProjection] = useState<"mercator" | "globe">("mercator");
   const [cameraCommand, setCameraCommand] = useState<CameraCommand | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
@@ -60,16 +66,19 @@ export function MapWorkspace() {
   }, [dataset]);
   const profiled = useMemo(() => graphResult.graph ? applyTransportProfile(graphResult.graph, scenario.transportProfileId) : null, [graphResult.graph, scenario.transportProfileId]);
   const costed = useMemo(() => profiled ? applyGeneralizedCosts(profiled) : null, [profiled]);
-  const prepared = useMemo(() => graphResult.graph && profiled && costed ? prepareNetwork(graphResult.graph, scenario, profiled, costed) : null, [costed, graphResult.graph, profiled, scenario]);
+  const spatialConstraints = useMemo(() => createSpatialConstraintSet(dataset), [dataset]);
+  const spatial = useMemo(() => costed ? applySpatialConstraints(costed, spatialConstraints, spatialPolicy) : null, [costed, spatialConstraints, spatialPolicy]);
+  const prepared = useMemo(() => graphResult.graph && profiled && costed && spatial ? prepareNetwork(graphResult.graph, scenario, profiled, costed, spatial) : null, [costed, graphResult.graph, profiled, scenario, spatial]);
   const registry = useMemo(() => {
     if (!graphResult.graph) return null;
     if (!profiled) return null;
     const base = createTransportWorkspaceRegistry(dataset, graphResult.graph, profiled, visibility, graphVisibility);
     const withCosts = costed ? addTransportCostsToRegistry(base, costed, costVisible) : base;
-    const withScenario = addScenarioToRegistry(withCosts, graphResult.graph, scenario);
+    const withSpatial = spatial ? addSpatialImpactsToRegistry(withCosts, spatial, spatialVisible) : withCosts;
+    const withScenario = addScenarioToRegistry(withSpatial, graphResult.graph, scenario);
     const withResult = addPhysarumResultToRegistry(withScenario, graphResult.graph, physarum.runtime.state);
     return addOSMAreaToRegistry(withResult, osmBounds);
-  }, [costVisible, costed, dataset, graphResult.graph, graphVisibility, osmBounds, physarum.runtime.state, profiled, scenario, visibility]);
+  }, [costVisible, costed, dataset, graphResult.graph, graphVisibility, osmBounds, physarum.runtime.state, profiled, scenario, spatial, spatialVisible, visibility]);
 
   useEffect(() => () => osmRequestRef.current?.abort(), []);
 
@@ -82,6 +91,7 @@ export function MapWorkspace() {
     setDataset(imported);
     setVisibility(DEFAULT_GIS_LAYER_VISIBILITY);
     setGraphVisibility(DEFAULT_GRAPH_LAYER_VISIBILITY);
+    setSpatialPolicy(DEFAULT_SPATIAL_POLICY);
     setScenario(createEmptyScenario());
     setScenarioMode(null);
     physarum.reset();
@@ -111,17 +121,19 @@ export function MapWorkspace() {
     const fetchStarted = performance.now();
     try {
       validateOSMArea(osmBounds);
-      const payload = await fetchOSMTransport(osmBounds, { signal: controller.signal });
+      const [payload, contextResult] = await Promise.all([fetchOSMTransport(osmBounds, { signal: controller.signal }), fetchOSMUrbanContext(osmBounds, { signal: controller.signal }).then((value) => ({ value, error: null as string | null })).catch((error: unknown) => ({ value: null, error: error instanceof Error ? error.message : "Urban context unavailable." }))]);
       const fetchMilliseconds = performance.now() - fetchStarted;
       const adapterStarted = performance.now();
       const converted = overpassResponseToGeoJSON(payload);
+      const urban = contextResult.value ? overpassUrbanContextToGeoJSON(contextResult.value) : null;
       if (converted.wayCount === 0) throw new OSMRequestError("empty", "No usable OSM transport ways were returned for this area.");
       const adapterMilliseconds = performance.now() - adapterStarted;
       const boundsKey = formatOSMBounds(osmBounds);
-      const ingested = ingestGeoJSON(converted.featureCollection, { name: `OSM transport · ${boundsKey}`, source: { kind: "osm", name: `${boundsKey}:${converted.timestamp ?? "current"}` } });
+      const combined = { type: "FeatureCollection", features: [...converted.featureCollection.features, ...(urban?.featureCollection.features ?? [])] };
+      const ingested = ingestGeoJSON(combined, { name: `OSM transport + urban context · ${boundsKey}`, source: { kind: "osm", name: `${boundsKey}:${converted.timestamp ?? "current"}` } });
       const imported = clipLineDatasetToBounds(ingested, osmBounds);
-      resetForDataset({ ...imported, warnings: [...imported.warnings, ...converted.warnings, "OSM access and one-way tags are preserved but not enforced; the graph is currently undirected."] });
-      setOSMSummary({ bounds: osmBounds, wayCount: converted.wayCount, skippedElementCount: converted.skippedElementCount, missingTopologyWayCount: converted.missingTopologyWayCount, fetchMilliseconds, adapterMilliseconds, warnings: converted.warnings });
+      resetForDataset({ ...imported, warnings: [...imported.warnings, ...converted.warnings, ...(urban?.warnings ?? []), ...(contextResult.error ? [`Urban context: ${contextResult.error}`] : []), "OSM access and one-way tags are preserved but not enforced; the graph is currently undirected."] });
+      setOSMSummary({ bounds: osmBounds, wayCount: converted.wayCount, skippedElementCount: converted.skippedElementCount, missingTopologyWayCount: converted.missingTopologyWayCount, urbanFeatureCount: urban?.wayCount ?? 0, urbanPolygonCount: urban?.polygonCount ?? 0, urbanContextWarning: contextResult.error, fetchMilliseconds, adapterMilliseconds, warnings: converted.warnings });
       if (imported.bounds) command({ type: "fit-bounds", bounds: imported.bounds });
     } catch (error) {
       if (controller !== osmRequestRef.current || error instanceof OSMRequestError && error.code === "aborted") return;
@@ -155,10 +167,10 @@ export function MapWorkspace() {
 
   function selectMapFeature(selection: MapFeatureSelection) {
     if (selection.kind === "edge" && profiled?.usableEdges.some((edge) => edge.id === selection.id)) setSelectedEdgeId(selection.id);
-    if (scenarioMode === "source" && selection.kind === "node" && profiled?.activeNodeIds.has(selection.id)) updateScenario((current) => setTerminal(current, "source", selection.id));
-    if (scenarioMode === "sink" && selection.kind === "node" && profiled?.activeNodeIds.has(selection.id)) updateScenario((current) => setTerminal(current, "sink", selection.id));
-    if (scenarioMode === "block" && selection.kind === "edge" && profiled?.usableEdges.some((edge) => edge.id === selection.id)) { setSelectedEdgeId(selection.id); updateScenario((current) => toggleBlockedEdge(current, selection.id)); }
-    if (scenarioMode === "penalty" && selection.kind === "edge" && profiled?.usableEdges.some((edge) => edge.id === selection.id)) { setSelectedEdgeId(selection.id); updateScenario((current) => setEdgePenalty(current, selection.id, penaltyMultiplier)); }
+    if (scenarioMode === "source" && selection.kind === "node" && spatial?.activeNodeIds.has(selection.id)) updateScenario((current) => setTerminal(current, "source", selection.id));
+    if (scenarioMode === "sink" && selection.kind === "node" && spatial?.activeNodeIds.has(selection.id)) updateScenario((current) => setTerminal(current, "sink", selection.id));
+    if (scenarioMode === "block" && selection.kind === "edge" && spatial?.usableEdges.some((edge) => edge.id === selection.id)) { setSelectedEdgeId(selection.id); updateScenario((current) => toggleBlockedEdge(current, selection.id)); }
+    if (scenarioMode === "penalty" && selection.kind === "edge" && spatial?.usableEdges.some((edge) => edge.id === selection.id)) { setSelectedEdgeId(selection.id); updateScenario((current) => setEdgePenalty(current, selection.id, penaltyMultiplier)); }
   }
 
   function changeProfile(profileId: TransportProfileId) {
@@ -171,13 +183,17 @@ export function MapWorkspace() {
     physarum.reset();
   }
 
+  function updateSpatialPolicy(key: "buildings" | "water" | "green", enabled: boolean) { setSpatialPolicy((current) => ({ ...current, [key]: enabled })); physarum.reset(); }
+
   const source = scenario.terminals.find((terminal) => terminal.role === "source");
   const sink = scenario.terminals.find((terminal) => terminal.role === "sink");
   const connectivity = prepared?.validation.sourceSinkConnectedAfterConstraints;
   const selectedCost = costed?.edges.find((item) => item.edge.id === selectedEdgeId);
   const selectedPrepared = prepared?.network?.edges.find((item) => item.graphEdgeId === selectedEdgeId);
+  const selectedSpatial = spatial?.edges.find((item) => item.costedEdge.edge.id === selectedEdgeId);
   const selectedPenalty = scenario.edgeConstraints.find((item) => item.edgeId === selectedEdgeId)?.penaltyMultiplier ?? 1;
   const costQAUrl = costed ? `data:application/json;charset=utf-8,${encodeURIComponent(serializeCostQAReport(createCostQAReport(costed)))}` : null;
+  const spatialQAUrl = spatial ? `data:application/json;charset=utf-8,${encodeURIComponent(serializeSpatialQAReport(createSpatialQAReport(spatial)))}` : null;
 
   return (
     <section className="map-workspace" aria-label="Physarum map workspace">
@@ -209,6 +225,8 @@ export function MapWorkspace() {
           {osmAreaError && <div className="import-error" role="alert">{osmAreaError}</div>}
           {osmSummary && <div className="scenario-stats" aria-label="OSM import summary">
             <span>OSM ways <b>{osmSummary.wayCount}</b> · Skipped <b>{osmSummary.skippedElementCount}</b></span>
+            <span>Urban context <b>{osmSummary.urbanFeatureCount}</b> features · <b>{osmSummary.urbanPolygonCount}</b> polygons</span>
+            {osmSummary.urbanContextWarning && <span className="dataset-warning">Urban context unavailable: {osmSummary.urbanContextWarning}</span>}
             <span>Missing topology anchors <b>{osmSummary.missingTopologyWayCount}</b></span>
             <span>Fetch <b>{osmSummary.fetchMilliseconds.toFixed(0)} ms</b> · Adapter <b>{osmSummary.adapterMilliseconds.toFixed(1)} ms</b></span>
           </div>}
@@ -250,6 +268,16 @@ export function MapWorkspace() {
           </div>
           {costed && costQAUrl && <a className="run-physarum" href={costQAUrl} download={`physarum-cost-qa-${costed.profileId}.json`}>Export cost QA JSON</a>}
         </section>}
+        {spatial && <section className="scenario-section" aria-label="Spatial constraints">
+          <div className="scenario-heading"><strong>Spatial constraints</strong><span>{spatial.diagnostics.hardExcludedEdgeCount} hard · {spatial.diagnostics.softAffectedEdgeCount} soft</span></div>
+          <div className="scenario-actions" aria-label="Spatial constraint controls">
+            <button type="button" aria-pressed={spatialPolicy.buildings} onClick={() => updateSpatialPolicy("buildings", !spatialPolicy.buildings)}>Buildings {spatialPolicy.buildings ? "On" : "Off"}</button>
+            <button type="button" aria-pressed={spatialPolicy.water} onClick={() => updateSpatialPolicy("water", !spatialPolicy.water)}>Water {spatialPolicy.water ? "On" : "Off"}</button>
+            <button type="button" aria-pressed={spatialPolicy.green} onClick={() => updateSpatialPolicy("green", !spatialPolicy.green)}>Green {spatialPolicy.green ? "Soft 1.025×" : "Off"}</button>
+          </div>
+          <div className="scenario-stats"><span>Context: building <b>{spatialConstraints.counts.building}</b> · water <b>{spatialConstraints.counts.water}</b> · green <b>{spatialConstraints.counts.green}</b></span><span>Edges unaffected <b>{spatial.diagnostics.unaffectedEdgeCount}</b> · relation tests <b>{spatial.diagnostics.relationTestCount}</b></span><span>Exceptions: bridge <b>{spatial.diagnostics.bridgeExceptionCount}</b> · tunnel <b>{spatial.diagnostics.tunnelExceptionCount}</b> · passage <b>{spatial.diagnostics.buildingPassageExceptionCount}</b></span></div>
+          {spatialQAUrl && <a className="run-physarum" href={spatialQAUrl} download={`physarum-spatial-qa-${spatial.profileId}.json`}>Export spatial QA JSON</a>}
+        </section>}
         {selectedCost && <details className="scenario-section" open aria-label="Selected edge cost inspector">
           <summary><strong>Edge cost inspector</strong> · {selectedCost.edge.id}</summary>
           <div className="scenario-stats">
@@ -261,7 +289,9 @@ export function MapWorkspace() {
             <span>Smoothness <b>{selectedCost.cost.smoothness ?? "missing / neutral"}</b> ×{selectedCost.cost.smoothnessFactor.toFixed(2)}</span>
             <span>Tracktype <b>{selectedCost.cost.tracktype ?? "missing"}</b> ×{selectedCost.cost.tracktypeFactor.toFixed(2)} · Combined ×{selectedCost.cost.conditionFactor.toFixed(2)}</span>
             <span>Base time <b>{selectedCost.cost.baseTravelTimeSeconds.toFixed(2)} s</b> · Profile cost <b>{selectedCost.cost.generalizedCostSeconds.toFixed(2)} s</b></span>
-            <span>Scenario ×<b>{selectedPenalty.toFixed(1)}</b> · Effective <b>{selectedPrepared?.effectiveCost.toFixed(2) ?? (selectedCost.cost.generalizedCostSeconds * selectedPenalty).toFixed(2)} s</b></span>
+            {selectedSpatial?.impacts.map((impact) => <span key={impact.constraintFeatureId}>Spatial <b>{impact.category}</b> · {impact.effect} · {impact.relation} · {(impact.affectedFraction * 100).toFixed(1)}% · {impact.exception ? `exception ${impact.exception}` : impact.reason}</span>)}
+            <span>Spatial ×<b>{selectedSpatial?.spatialMultiplier.toFixed(3) ?? "1.000"}</b> · Spatial cost <b>{selectedSpatial?.spatialCostSeconds.toFixed(2) ?? selectedCost.cost.generalizedCostSeconds.toFixed(2)} s</b></span>
+            <span>Scenario ×<b>{selectedPenalty.toFixed(1)}</b> · Effective <b>{selectedPrepared?.effectiveCost.toFixed(2) ?? ((selectedSpatial?.spatialCostSeconds ?? selectedCost.cost.generalizedCostSeconds) * selectedPenalty).toFixed(2)} s</b></span>
             <span>Source <b>{selectedCost.cost.sourceFeatureId}</b> · Provenance conflict <b>{selectedCost.provenanceCostConflict ? "yes" : "no"}</b></span>
           </div>
         </details>}
@@ -269,9 +299,9 @@ export function MapWorkspace() {
           <section className="scenario-section" aria-label="Scenario controls">
             <div className="scenario-heading"><strong>Scenario</strong><span className={prepared.validation.valid ? "status-valid" : "status-invalid"}>{prepared.validation.valid ? "Valid" : "Invalid"}</span></div>
             <div className="scenario-stats">
-              <label>Source <select aria-label="Source node" value={source?.nodeId ?? ""} onChange={(event) => event.target.value && updateScenario((current) => setTerminal(current, "source", event.target.value))}><option value="">not selected</option>{graphResult.graph?.nodes.filter((node) => profiled?.activeNodeIds.has(node.id)).map((node) => <option key={node.id} value={node.id}>{node.id}</option>)}</select></label>
-              <label>Sink <select aria-label="Sink node" value={sink?.nodeId ?? ""} onChange={(event) => event.target.value && updateScenario((current) => setTerminal(current, "sink", event.target.value))}><option value="">not selected</option>{graphResult.graph?.nodes.filter((node) => profiled?.activeNodeIds.has(node.id)).map((node) => <option key={node.id} value={node.id}>{node.id}</option>)}</select></label>
-              <label>Edge <select aria-label="Scenario edge" value={selectedEdgeId} onChange={(event) => setSelectedEdgeId(event.target.value)}><option value="">select on map</option>{profiled?.usableEdges.map((edge) => <option key={edge.id} value={edge.id}>{edge.id}</option>)}</select></label>
+              <label>Source <select aria-label="Source node" value={source?.nodeId ?? ""} onChange={(event) => event.target.value && updateScenario((current) => setTerminal(current, "source", event.target.value))}><option value="">not selected</option>{graphResult.graph?.nodes.filter((node) => spatial?.activeNodeIds.has(node.id)).map((node) => <option key={node.id} value={node.id}>{node.id}</option>)}</select></label>
+              <label>Sink <select aria-label="Sink node" value={sink?.nodeId ?? ""} onChange={(event) => event.target.value && updateScenario((current) => setTerminal(current, "sink", event.target.value))}><option value="">not selected</option>{graphResult.graph?.nodes.filter((node) => spatial?.activeNodeIds.has(node.id)).map((node) => <option key={node.id} value={node.id}>{node.id}</option>)}</select></label>
+              <label>Edge <select aria-label="Scenario edge" value={selectedEdgeId} onChange={(event) => setSelectedEdgeId(event.target.value)}><option value="">select on map</option>{spatial?.usableEdges.map((edge) => <option key={edge.id} value={edge.id}>{edge.id}</option>)}</select></label>
               <span>Usable edges <b>{prepared.validation.activeEdgeCount}</b> · Blocked <b>{prepared.validation.blockedEdgeCount}</b> · Penalized <b>{prepared.validation.penalizedEdgeCount}</b></span>
               <span>Connectivity <b>{connectivity === null ? "Not evaluated" : connectivity ? "Connected" : "Disconnected"}</b></span>
             </div>
@@ -324,6 +354,7 @@ export function MapWorkspace() {
           <label className="layer-toggle"><span>Graph edges</span><input type="checkbox" checked={graphVisibility.edges} onChange={(event) => setGraphVisibility((current) => ({ ...current, edges: event.target.checked }))} /></label>
           <label className="layer-toggle"><span>Graph nodes</span><input type="checkbox" checked={graphVisibility.nodes} onChange={(event) => setGraphVisibility((current) => ({ ...current, nodes: event.target.checked }))} /></label>
           <label className="layer-toggle"><span>Profile cost</span><input type="checkbox" checked={costVisible} onChange={(event) => setCostVisible(event.target.checked)} /></label>
+          <label className="layer-toggle"><span>Spatial impacts</span><input type="checkbox" checked={spatialVisible} onChange={(event) => setSpatialVisible(event.target.checked)} /></label>
         </fieldset>
         {importError && <div className="import-error" role="alert">{importError}</div>}
       </aside>

@@ -3,7 +3,7 @@ import { ingestGeoJSON } from "../gis/ingest";
 import { buildTransportGraph } from "../graph/build";
 import { prepareNetwork } from "../scenario/prepare";
 import { createEmptyScenario, setTerminal } from "../scenario/scenario";
-import { overpassResponseToGeoJSON } from "./adapter";
+import { overpassResponseToGeoJSON, overpassUrbanContextToGeoJSON } from "./adapter";
 import { SMALL_OSM_RESPONSE_FIXTURE } from "./fixtures";
 
 function dataset() {
@@ -12,6 +12,10 @@ function dataset() {
 }
 
 describe("OSM domain adapter", () => {
+  it("imports closed urban ways as polygons and waterways as context lines", () => { const result = overpassUrbanContextToGeoJSON({ elements: [
+    { type: "way", id: 201, tags: { building: "yes" }, geometry: [{ lon: 0, lat: 0 }, { lon: 1, lat: 0 }, { lon: 1, lat: 1 }, { lon: 0, lat: 0 }] },
+    { type: "way", id: 202, tags: { waterway: "stream" }, geometry: [{ lon: 0, lat: 0 }, { lon: 1, lat: 1 }] },
+  ] }); expect(result).toMatchObject({ wayCount: 2, polygonCount: 1, lineCount: 1 }); expect(result.featureCollection.features[0]).toMatchObject({ id: "osm-context-way-201", geometry: { type: "Polygon" } }); });
   it("converts ways to LineString features with stable OSM IDs", () => {
     const converted = overpassResponseToGeoJSON(SMALL_OSM_RESPONSE_FIXTURE);
     expect(converted.wayCount).toBe(4);

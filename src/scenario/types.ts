@@ -61,6 +61,8 @@ export type PreparedEdge = {
   readonly toNodeId: string;
   readonly lengthMeters: number;
   readonly profileCostSeconds?: number;
+  readonly spatialCostSeconds?: number;
+  readonly spatialMultiplier?: number;
   readonly penaltyMultiplier: number;
   readonly effectiveCost: number;
 };

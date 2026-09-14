@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createOverpassQuery, fetchOSMTransport, OSMRequestError } from "./client";
+import { createOverpassQuery, createUrbanContextQuery, fetchOSMTransport, OSMRequestError } from "./client";
 import { measureOSMArea, validateOSMArea } from "./area";
 
 const bounds = [24.03, 49.84, 24.04, 49.85] as const;
@@ -12,6 +12,8 @@ describe("OSM request safeguards", () => {
     expect(query).toContain('["area"!="yes"](49.84,24.03,49.85,24.04)');
     expect(query).toContain("out body geom");
   });
+
+  it("keeps focused urban context in a separate bounded query", () => { const query = createUrbanContextQuery(bounds); expect(query).toContain('way["building"]'); expect(query).toContain('way["natural"="water"]'); expect(query).toContain('way["leisure"="park"]'); expect(query).not.toContain('way["highway"'); });
 
   it("measures and accepts a district-scale area", () => {
     expect(measureOSMArea(bounds).areaSquareKilometers).toBeGreaterThan(0);

@@ -235,7 +235,7 @@ export function MapWorkspace() {
           <div className="scenario-stats" aria-label="Transport profile summary">
             <span>Active nodes <b>{profiled.connectivity.activeNodeCount}</b> · Usable edges <b>{profiled.connectivity.usableEdgeCount}</b> · Excluded <b>{profiled.connectivity.excludedEdgeCount}</b></span>
             <span>Components <b>{profiled.connectivity.connectedComponentCount}</b> · Largest <b>{(profiled.connectivity.largestConnectedComponentRatio * 100).toFixed(1)}%</b></span>
-            <span>Default exclusions <b>{profiled.accessDiagnostics.excludedByHighwayDefault}</b> · Access exclusions <b>{profiled.accessDiagnostics.excludedByAccessTag}</b> · Conditional <b>{profiled.accessDiagnostics.conditionalAccessExcluded}</b></span>
+            <span>Physical <b>{profiled.accessDiagnostics.physicalEdgeCount}</b> · Allowed <b>{profiled.accessDiagnostics.allowedEdgeCount}</b> · Restricted <b>{profiled.accessDiagnostics.restrictedEdgeCount}</b> · Denied <b>{profiled.accessDiagnostics.deniedEdgeCount}</b> · Conditional <b>{profiled.accessDiagnostics.conditionalAccessExcluded}</b></span>
             <span>Explicitly allowed <b>{profiled.accessDiagnostics.explicitlyAllowed}</b> · Provenance conflicts <b>{profiled.accessDiagnostics.conflictingProvenance}</b></span>
             <span>One-way tagged edges <b>{profiled.accessDiagnostics.onewayTaggedNotEnforced}</b>. One-way restrictions are not yet enforced.</span>
           </div>

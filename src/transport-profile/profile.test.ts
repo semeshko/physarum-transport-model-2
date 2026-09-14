@@ -14,7 +14,7 @@ function decision(highway: string, profileId: TransportProfileId, tags: Record<s
 
 describe("transport profile access rules", () => {
   it.each([
-    ["residential", true, true, true], ["footway", true, false, false], ["cycleway", false, true, false], ["pedestrian", true, false, false], ["path", true, true, false], ["steps", true, false, false], ["motorway", false, false, true], ["service", true, false, false], ["track", true, true, true], ["bridleway", false, false, false],
+    ["motorway", false, false, true], ["motorway_link", false, false, true], ["trunk", true, true, true], ["trunk_link", true, true, true], ["primary", true, true, true], ["primary_link", true, true, true], ["secondary", true, true, true], ["secondary_link", true, true, true], ["tertiary", true, true, true], ["tertiary_link", true, true, true], ["unclassified", true, true, true], ["residential", true, true, true], ["living_street", true, false, false], ["service", true, false, false], ["track", true, true, true], ["road", true, true, true], ["pedestrian", true, false, false], ["path", true, true, false], ["footway", true, false, false], ["steps", true, false, false], ["cycleway", false, true, false], ["bridleway", false, false, false],
   ] as const)("applies documented MVP defaults for highway=%s", (highway, pedestrian, bicycle, motor) => {
     expect(decision(highway, "pedestrian").decision === "allowed").toBe(pedestrian);
     expect(decision(highway, "bicycle").decision === "allowed").toBe(bicycle);
@@ -36,8 +36,28 @@ describe("transport profile access rules", () => {
 
   it.each(["no", "private"])("denies access=%s", (value) => expect(decision("residential", "pedestrian", { access: value }).decision).toBe("denied"));
   it.each(["yes", "designated", "permissive"])("allows explicit access=%s", (value) => expect(decision("motorway", "pedestrian", { foot: value }).decision).toBe("allowed"));
-  it.each(["destination", "customers", "delivery", "permit", "official", "unknown"])("conservatively excludes unsupported access=%s", (value) => expect(decision("residential", "motor", { motorcar: value })).toMatchObject({ decision: "denied", reason: "conditional-excluded", conditional: true }));
-  it("conservatively excludes conditional expressions", () => expect(decision("residential", "pedestrian", { foot: "yes", "foot:conditional": "no @ (Mo-Fr)" })).toMatchObject({ decision: "denied", reason: "conditional-excluded" }));
+  it.each(["destination", "customers", "delivery", "permit", "official", "dismount", "unknown"])("classifies non-general access=%s as restricted", (value) => expect(decision("residential", "motor", { motorcar: value })).toMatchObject({ decision: "restricted", reason: "explicit-restricted" }));
+  it("classifies unevaluated conditional expressions as restricted", () => expect(decision("residential", "pedestrian", { foot: "yes", "foot:conditional": "no @ (Mo-Fr)" })).toMatchObject({ decision: "restricted", reason: "conditional-restricted", conditional: true }));
+
+  it("applies motorroad defaults to pedestrian and bicycle trunk access", () => {
+    expect(decision("trunk", "pedestrian", { motorroad: "yes" }).decision).toBe("denied");
+    expect(decision("trunk", "bicycle", { motorroad: "yes" }).decision).toBe("denied");
+    expect(decision("trunk", "motor", { motorroad: "yes" }).decision).toBe("allowed");
+    expect(decision("trunk", "pedestrian", { motorroad: "yes", foot: "yes" }).decision).toBe("allowed");
+  });
+
+  it("keeps generic imported road and path data usable without OSM highway tags", () => {
+    const imported = graph([
+      { type: "Feature", id: "road", properties: { category: "road" }, geometry: { type: "LineString", coordinates: [[0, 0], [1, 0]] } },
+      { type: "Feature", id: "path", properties: { category: "path" }, geometry: { type: "LineString", coordinates: [[2, 0], [3, 0]] } },
+    ]);
+    const road = imported.edges.find((edge) => edge.provenance[0].sourceCategory === "road")!;
+    const path = imported.edges.find((edge) => edge.provenance[0].sourceCategory === "path")!;
+    for (const profileId of ["pedestrian", "bicycle", "motor"] as const) expect(decideEdgeAccess(road, profileId).decision).toBe("allowed");
+    expect(decideEdgeAccess(path, "pedestrian").decision).toBe("allowed");
+    expect(decideEdgeAccess(path, "bicycle").decision).toBe("allowed");
+    expect(decideEdgeAccess(path, "motor").decision).toBe("denied");
+  });
 
   it("evaluates every merged provenance and diagnoses disagreement", () => {
     const merged = graph([feature("allowed", "residential", 0, { foot: "yes" }), feature("denied", "residential", 0, { foot: "no" })]);

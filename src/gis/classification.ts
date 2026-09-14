@@ -18,6 +18,8 @@ function property(properties: GISProperties, key: string): string | undefined {
 export function classifyFeature(properties: GISProperties): GISCategory {
   const highway = property(properties, "highway");
   if (highway) return PATH_HIGHWAYS.has(highway) ? "path" : "road";
+  const declaredCategory = property(properties, "category") ?? property(properties, "kind");
+  if (declaredCategory === "road" || declaredCategory === "path") return declaredCategory;
   if (property(properties, "building")) return "building";
   if (property(properties, "waterway") || property(properties, "natural") === "water") return "water";
   if (property(properties, "railway")) return "railway";

@@ -1,4 +1,5 @@
 import type { GraphNode } from "../graph/types";
+import type { TransportProfileId } from "../transport-profile/types";
 
 export type TerminalRole = "source" | "sink";
 
@@ -21,6 +22,7 @@ export type EdgeCostModel = { readonly kind: "length-meters" };
 export type AnalysisScenario = {
   readonly id: string;
   readonly name: string;
+  readonly transportProfileId: TransportProfileId;
   readonly terminals: readonly ScenarioTerminal[];
   readonly edgeConstraints: readonly ScenarioEdgeConstraint[];
   readonly costModel: EdgeCostModel;
@@ -31,10 +33,12 @@ export type ScenarioValidationCode =
   | "missing-sink"
   | "duplicate-terminal"
   | "unknown-node"
+  | "inactive-node"
   | "invalid-terminal-magnitude"
   | "same-source-sink"
   | "duplicate-edge-constraint"
   | "unknown-edge"
+  | "inactive-edge"
   | "invalid-penalty"
   | "terminals-disconnected"
   | "constraints-disconnect-terminals";
@@ -62,6 +66,7 @@ export type PreparedEdge = {
 
 export type PreparedNetwork = {
   readonly graphId: string;
+  readonly transportProfileId?: TransportProfileId;
   readonly scenarioId: string;
   readonly nodes: readonly GraphNode[];
   readonly edges: readonly PreparedEdge[];

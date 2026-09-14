@@ -1,9 +1,15 @@
 import type { AnalysisScenario, ScenarioEdgeConstraint, ScenarioTerminal, TerminalRole } from "./types";
+import type { TransportProfileId } from "../transport-profile/types";
 
 export const DEFAULT_TERMINAL_MAGNITUDE = 1;
 
 export function createEmptyScenario(id = "scenario-1", name = "Untitled scenario"): AnalysisScenario {
-  return { id, name, terminals: [], edgeConstraints: [], costModel: { kind: "length-meters" } };
+  return { id, name, transportProfileId: "pedestrian", terminals: [], edgeConstraints: [], costModel: { kind: "length-meters" } };
+}
+
+export function setTransportProfile(scenario: AnalysisScenario, transportProfileId: TransportProfileId): AnalysisScenario {
+  if (scenario.transportProfileId === transportProfileId) return scenario;
+  return { ...scenario, transportProfileId, terminals: [], edgeConstraints: [] };
 }
 
 export function setTerminal(scenario: AnalysisScenario, role: TerminalRole, nodeId: string, magnitude = DEFAULT_TERMINAL_MAGNITUDE): AnalysisScenario {

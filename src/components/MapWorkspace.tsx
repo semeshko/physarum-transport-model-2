@@ -18,8 +18,10 @@ import { addOSMAreaToRegistry } from "@/osm/map-registry";
 import type { OSMImportSummary } from "@/osm/types";
 import { addScenarioToRegistry } from "@/scenario/map-registry";
 import { prepareNetwork } from "@/scenario/prepare";
-import { createEmptyScenario, setEdgePenalty, setTerminal, toggleBlockedEdge } from "@/scenario/scenario";
+import { createEmptyScenario, setEdgePenalty, setTerminal, setTransportProfile, toggleBlockedEdge } from "@/scenario/scenario";
 import type { AnalysisScenario } from "@/scenario/types";
+import { applyTransportProfile } from "@/transport-profile/profile";
+import { TRANSPORT_PROFILE_IDS, type TransportProfileId } from "@/transport-profile/types";
 import { MapCanvas, type CameraCommand, type MapFeatureSelection } from "./MapCanvas";
 
 const initialDataset = ingestGeoJSON(sampleUrban, { name: "Synthetic urban sample", source: { kind: "bundled", name: "sample-urban.json" } });
@@ -53,14 +55,16 @@ export function MapWorkspace() {
     try { return { graph: buildTransportGraph(dataset), error: null, buildMilliseconds: performance.now() - started }; }
     catch (error) { return { graph: null, error: error instanceof Error ? error.message : "Graph extraction failed.", buildMilliseconds: performance.now() - started }; }
   }, [dataset]);
-  const prepared = useMemo(() => graphResult.graph ? prepareNetwork(graphResult.graph, scenario) : null, [graphResult.graph, scenario]);
+  const profiled = useMemo(() => graphResult.graph ? applyTransportProfile(graphResult.graph, scenario.transportProfileId) : null, [graphResult.graph, scenario.transportProfileId]);
+  const prepared = useMemo(() => graphResult.graph && profiled ? prepareNetwork(graphResult.graph, scenario, profiled) : null, [graphResult.graph, profiled, scenario]);
   const registry = useMemo(() => {
     if (!graphResult.graph) return null;
-    const base = createTransportWorkspaceRegistry(dataset, graphResult.graph, visibility, graphVisibility);
+    if (!profiled) return null;
+    const base = createTransportWorkspaceRegistry(dataset, graphResult.graph, profiled, visibility, graphVisibility);
     const withScenario = addScenarioToRegistry(base, graphResult.graph, scenario);
     const withResult = addPhysarumResultToRegistry(withScenario, graphResult.graph, physarum.runtime.state);
     return addOSMAreaToRegistry(withResult, osmBounds);
-  }, [dataset, graphResult.graph, graphVisibility, osmBounds, physarum.runtime.state, scenario, visibility]);
+  }, [dataset, graphResult.graph, graphVisibility, osmBounds, physarum.runtime.state, profiled, scenario, visibility]);
 
   useEffect(() => () => osmRequestRef.current?.abort(), []);
 
@@ -145,10 +149,15 @@ export function MapWorkspace() {
   }
 
   function selectMapFeature(selection: MapFeatureSelection) {
-    if (scenarioMode === "source" && selection.kind === "node") updateScenario((current) => setTerminal(current, "source", selection.id));
-    if (scenarioMode === "sink" && selection.kind === "node") updateScenario((current) => setTerminal(current, "sink", selection.id));
-    if (scenarioMode === "block" && selection.kind === "edge") { setSelectedEdgeId(selection.id); updateScenario((current) => toggleBlockedEdge(current, selection.id)); }
-    if (scenarioMode === "penalty" && selection.kind === "edge") { setSelectedEdgeId(selection.id); updateScenario((current) => setEdgePenalty(current, selection.id, penaltyMultiplier)); }
+    if (scenarioMode === "source" && selection.kind === "node" && profiled?.activeNodeIds.has(selection.id)) updateScenario((current) => setTerminal(current, "source", selection.id));
+    if (scenarioMode === "sink" && selection.kind === "node" && profiled?.activeNodeIds.has(selection.id)) updateScenario((current) => setTerminal(current, "sink", selection.id));
+    if (scenarioMode === "block" && selection.kind === "edge" && profiled?.usableEdges.some((edge) => edge.id === selection.id)) { setSelectedEdgeId(selection.id); updateScenario((current) => toggleBlockedEdge(current, selection.id)); }
+    if (scenarioMode === "penalty" && selection.kind === "edge" && profiled?.usableEdges.some((edge) => edge.id === selection.id)) { setSelectedEdgeId(selection.id); updateScenario((current) => setEdgePenalty(current, selection.id, penaltyMultiplier)); }
+  }
+
+  function changeProfile(profileId: TransportProfileId) {
+    setScenario((current) => setTransportProfile(current, profileId));
+    setScenarioMode(null); setSelectedEdgeId(""); physarum.reset();
   }
 
   function updateScenario(updater: (current: AnalysisScenario) => AnalysisScenario) {
@@ -218,13 +227,26 @@ export function MapWorkspace() {
           </section>
         )}
         {graphResult.error && <div className="import-error" role="alert">{graphResult.error}</div>}
+        {profiled && <section className="scenario-section" aria-label="Transport profile">
+          <div className="scenario-heading"><strong>Transport mode</strong><span>{scenario.transportProfileId}</span></div>
+          <div className="scenario-actions" aria-label="Transport mode selector">
+            {TRANSPORT_PROFILE_IDS.map((profileId) => <button type="button" aria-pressed={scenario.transportProfileId === profileId} key={profileId} onClick={() => changeProfile(profileId)}>{profileId === "pedestrian" ? "Pedestrian" : profileId === "bicycle" ? "Bicycle" : "Motor"}</button>)}
+          </div>
+          <div className="scenario-stats" aria-label="Transport profile summary">
+            <span>Active nodes <b>{profiled.connectivity.activeNodeCount}</b> · Usable edges <b>{profiled.connectivity.usableEdgeCount}</b> · Excluded <b>{profiled.connectivity.excludedEdgeCount}</b></span>
+            <span>Components <b>{profiled.connectivity.connectedComponentCount}</b> · Largest <b>{(profiled.connectivity.largestConnectedComponentRatio * 100).toFixed(1)}%</b></span>
+            <span>Default exclusions <b>{profiled.accessDiagnostics.excludedByHighwayDefault}</b> · Access exclusions <b>{profiled.accessDiagnostics.excludedByAccessTag}</b> · Conditional <b>{profiled.accessDiagnostics.conditionalAccessExcluded}</b></span>
+            <span>Explicitly allowed <b>{profiled.accessDiagnostics.explicitlyAllowed}</b> · Provenance conflicts <b>{profiled.accessDiagnostics.conflictingProvenance}</b></span>
+            <span>One-way tagged edges <b>{profiled.accessDiagnostics.onewayTaggedNotEnforced}</b>. One-way restrictions are not yet enforced.</span>
+          </div>
+        </section>}
         {prepared && (
           <section className="scenario-section" aria-label="Scenario controls">
             <div className="scenario-heading"><strong>Scenario</strong><span className={prepared.validation.valid ? "status-valid" : "status-invalid"}>{prepared.validation.valid ? "Valid" : "Invalid"}</span></div>
             <div className="scenario-stats">
-              <label>Source <select aria-label="Source node" value={source?.nodeId ?? ""} onChange={(event) => event.target.value && updateScenario((current) => setTerminal(current, "source", event.target.value))}><option value="">not selected</option>{graphResult.graph?.nodes.map((node) => <option key={node.id} value={node.id}>{node.id}</option>)}</select></label>
-              <label>Sink <select aria-label="Sink node" value={sink?.nodeId ?? ""} onChange={(event) => event.target.value && updateScenario((current) => setTerminal(current, "sink", event.target.value))}><option value="">not selected</option>{graphResult.graph?.nodes.map((node) => <option key={node.id} value={node.id}>{node.id}</option>)}</select></label>
-              <label>Edge <select aria-label="Scenario edge" value={selectedEdgeId} onChange={(event) => setSelectedEdgeId(event.target.value)}><option value="">select on map</option>{graphResult.graph?.edges.map((edge) => <option key={edge.id} value={edge.id}>{edge.id}</option>)}</select></label>
+              <label>Source <select aria-label="Source node" value={source?.nodeId ?? ""} onChange={(event) => event.target.value && updateScenario((current) => setTerminal(current, "source", event.target.value))}><option value="">not selected</option>{graphResult.graph?.nodes.filter((node) => profiled?.activeNodeIds.has(node.id)).map((node) => <option key={node.id} value={node.id}>{node.id}</option>)}</select></label>
+              <label>Sink <select aria-label="Sink node" value={sink?.nodeId ?? ""} onChange={(event) => event.target.value && updateScenario((current) => setTerminal(current, "sink", event.target.value))}><option value="">not selected</option>{graphResult.graph?.nodes.filter((node) => profiled?.activeNodeIds.has(node.id)).map((node) => <option key={node.id} value={node.id}>{node.id}</option>)}</select></label>
+              <label>Edge <select aria-label="Scenario edge" value={selectedEdgeId} onChange={(event) => setSelectedEdgeId(event.target.value)}><option value="">select on map</option>{profiled?.usableEdges.map((edge) => <option key={edge.id} value={edge.id}>{edge.id}</option>)}</select></label>
               <span>Usable edges <b>{prepared.validation.activeEdgeCount}</b> · Blocked <b>{prepared.validation.blockedEdgeCount}</b> · Penalized <b>{prepared.validation.penalizedEdgeCount}</b></span>
               <span>Connectivity <b>{connectivity === null ? "Not evaluated" : connectivity ? "Connected" : "Disconnected"}</b></span>
             </div>

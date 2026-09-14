@@ -102,7 +102,7 @@ describe("scenario preparation", () => {
   });
 
   it("creates a predictable empty and reset scenario", () => {
-    expect(createEmptyScenario()).toEqual({ id: "scenario-1", name: "Untitled scenario", terminals: [], edgeConstraints: [], costModel: { kind: "length-meters" } });
+    expect(createEmptyScenario()).toEqual({ id: "scenario-1", name: "Untitled scenario", transportProfileId: "pedestrian", terminals: [], edgeConstraints: [], costModel: { kind: "length-meters" } });
     expect(prepareNetwork(graph(), createEmptyScenario()).validation).toMatchObject({ valid: false, activeEdgeCount: 2, blockedEdgeCount: 0, penalizedEdgeCount: 0 });
   });
 

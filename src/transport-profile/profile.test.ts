@@ -46,6 +46,12 @@ describe("transport profile access rules", () => {
     expect(decision("trunk", "pedestrian", { motorroad: "yes", foot: "yes" }).decision).toBe("allowed");
   });
 
+  it("treats smoothness=impassable as physical denial for wheeled profiles only", () => {
+    expect(decision("path", "pedestrian", { smoothness: "impassable" }).decision).toBe("allowed");
+    expect(decision("path", "bicycle", { smoothness: "impassable" })).toMatchObject({ decision: "denied", reason: "smoothness-impassable-deny" });
+    expect(decision("residential", "motor", { smoothness: "impassable" })).toMatchObject({ decision: "denied", reason: "smoothness-impassable-deny" });
+  });
+
   it("keeps generic imported road and path data usable without OSM highway tags", () => {
     const imported = graph([
       { type: "Feature", id: "road", properties: { category: "road" }, geometry: { type: "LineString", coordinates: [[0, 0], [1, 0]] } },

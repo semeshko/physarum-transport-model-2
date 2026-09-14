@@ -15,6 +15,7 @@ const PRECEDENCE: Readonly<Record<TransportProfileId, readonly string[]>> = { pe
 
 function stringTag(properties: GISProperties, key: string): string | null { const value = properties[key]; return typeof value === "string" && value.trim() ? value.trim().toLowerCase() : null; }
 function provenanceDecision(provenance: GraphEdgeProvenance, profileId: TransportProfileId): AccessEvidence {
+  if (profileId !== "pedestrian" && stringTag(provenance.sourceProperties, "smoothness") === "impassable") return { sourceFeatureId: provenance.sourceFeatureId, key: "smoothness", value: "impassable", reason: "smoothness-impassable-deny", decision: "denied", allowed: false };
   for (const key of CONDITIONAL_KEYS[profileId]) { const value = stringTag(provenance.sourceProperties, key); if (value) return { sourceFeatureId: provenance.sourceFeatureId, key, value, reason: "conditional-restricted", decision: "restricted", allowed: false }; }
   for (const key of PRECEDENCE[profileId]) {
     const value = stringTag(provenance.sourceProperties, key); if (!value) continue;

@@ -18,6 +18,7 @@ const SURFACE_BANDS: Readonly<Record<string, readonly [number, number, number]>>
 const SMOOTHNESS_BANDS: Readonly<Record<string, readonly [number, number, number]>> = {
   excellent: [1, 1, 1], good: [1, 1, 1], intermediate: [1.02, 1.1, 1.1], bad: [1.1, 1.35, 1.4], very_bad: [1.25, 1.7, 2], horrible: [1.5, 2.5, 3], very_horrible: [1.8, 3, 4], impassable: [2.5, 4, 5],
 };
+const TRACKTYPE_FALLBACK_BANDS: Readonly<Record<string, readonly [number, number, number]>> = { grade1: [1, 1, 1], grade2: [1.05, 1.15, 1.1], grade3: [1.1, 1.3, 1.25], grade4: [1.2, 1.5, 1.5], grade5: [1.35, 1.8, 2] };
 const PROFILE_INDEX: Readonly<Record<TransportProfileId, 0 | 1 | 2>> = { pedestrian: 0, bicycle: 1, motor: 2 };
 const MINIMUM_COST_SECONDS = 0.001;
 
@@ -35,11 +36,11 @@ function costForProvenance(lengthMeters: number, provenance: GraphEdgeProvenance
   const highwaySpeed = highway ? SPEEDS[profileId][highway] : undefined;
   const speedKilometersPerHour = Math.min(explicit ?? highwaySpeed ?? PROFILE_DEFAULT_SPEED[profileId], 160);
   const speedSource = explicit ? "explicit-maxspeed" as const : highwaySpeed ? "highway-default" as const : "profile-default" as const;
-  const surface = tag(provenance.sourceProperties, "surface"); const smoothness = tag(provenance.sourceProperties, "smoothness"); const index = PROFILE_INDEX[profileId];
+  const surface = tag(provenance.sourceProperties, "surface"); const smoothness = tag(provenance.sourceProperties, "smoothness"); const tracktype = tag(provenance.sourceProperties, "tracktype"); const index = PROFILE_INDEX[profileId];
   const surfaceFactor = surface ? SURFACE_BANDS[surface]?.[index] ?? 1 : 1; const smoothnessFactor = smoothness ? SMOOTHNESS_BANDS[smoothness]?.[index] ?? 1 : 1;
-  const conditionFactor = Math.max(surfaceFactor, smoothnessFactor); const baseTravelTimeSeconds = lengthMeters / (speedKilometersPerHour / 3.6);
+  const tracktypeFactor = !surface && !smoothness && tracktype ? TRACKTYPE_FALLBACK_BANDS[tracktype]?.[index] ?? 1 : 1; const conditionFactor = Math.max(surfaceFactor, smoothnessFactor, tracktypeFactor); const baseTravelTimeSeconds = lengthMeters / (speedKilometersPerHour / 3.6);
   const generalizedCostSeconds = Math.max(MINIMUM_COST_SECONDS, baseTravelTimeSeconds * conditionFactor);
-  return { profileId, lengthMeters, speedKilometersPerHour, speedSource, speedEvidence: explicit ? `maxspeed=${tag(provenance.sourceProperties, "maxspeed")}` : highwaySpeed ? `model highway=${highway}` : `model profile=${profileId}`, baseTravelTimeSeconds, surface, surfaceFactor, smoothness, smoothnessFactor, conditionFactor, conditionSource: surface && smoothness ? "surface-and-smoothness" : surface ? "surface" : smoothness ? "smoothness" : "default-neutral", comfortFactor: 1, generalizedCostSeconds, sourceFeatureId: provenance.sourceFeatureId };
+  return { profileId, lengthMeters, speedKilometersPerHour, speedSource, speedEvidence: explicit ? `maxspeed=${tag(provenance.sourceProperties, "maxspeed")}` : highwaySpeed ? `model highway=${highway}` : `model profile=${profileId}`, baseTravelTimeSeconds, surface, surfaceFactor, smoothness, smoothnessFactor, tracktype, tracktypeFactor, conditionFactor, conditionSource: surface && smoothness ? "surface-and-smoothness" : surface ? "surface" : smoothness ? "smoothness" : tracktype ? "tracktype-fallback" : "default-neutral", comfortFactor: 1, generalizedCostSeconds, sourceFeatureId: provenance.sourceFeatureId };
 }
 function median(values: readonly number[]): number { if (!values.length) return 0; const sorted = [...values].sort((a, b) => a - b); const middle = Math.floor(sorted.length / 2); return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2; }
 
@@ -52,5 +53,5 @@ export function applyGeneralizedCosts(profiled: ProfiledTransportNetwork): Coste
     return { edge, cost: cheapest, provenanceCostConflict, candidateCosts };
   });
   const costs = edges.map((item) => item.cost);
-  return { graphId: profiled.graphId, profileId: profiled.profileId, nodes: profiled.nodes, edges, diagnostics: { edgeCount: edges.length, explicitSpeedCount: costs.filter((item) => item.speedSource === "explicit-maxspeed").length, fallbackSpeedCount: costs.filter((item) => item.speedSource !== "explicit-maxspeed").length, surfaceTaggedCount: costs.filter((item) => item.surface !== null).length, smoothnessTaggedCount: costs.filter((item) => item.smoothness !== null).length, provenanceCostConflictCount: edges.filter((item) => item.provenanceCostConflict).length, medianTravelTimeSeconds: median(costs.map((item) => item.generalizedCostSeconds)), medianCostPerMeter: median(costs.map((item) => item.generalizedCostSeconds / item.lengthMeters)) } };
+  return { graphId: profiled.graphId, profileId: profiled.profileId, nodes: profiled.nodes, edges, diagnostics: { edgeCount: edges.length, explicitSpeedCount: costs.filter((item) => item.speedSource === "explicit-maxspeed").length, fallbackSpeedCount: costs.filter((item) => item.speedSource !== "explicit-maxspeed").length, surfaceTaggedCount: costs.filter((item) => item.surface !== null).length, smoothnessTaggedCount: costs.filter((item) => item.smoothness !== null).length, tracktypeTaggedCount: costs.filter((item) => item.tracktype !== null).length, provenanceCostConflictCount: edges.filter((item) => item.provenanceCostConflict).length, medianTravelTimeSeconds: median(costs.map((item) => item.generalizedCostSeconds)), medianCostPerMeter: median(costs.map((item) => item.generalizedCostSeconds / item.lengthMeters)) } };
 }

@@ -24,6 +24,7 @@ import { applyTransportProfile } from "@/transport-profile/profile";
 import { TRANSPORT_PROFILE_IDS, type TransportProfileId } from "@/transport-profile/types";
 import { applyGeneralizedCosts } from "@/transport-cost/model";
 import { addTransportCostsToRegistry } from "@/transport-cost/map-registry";
+import { createCostQAReport, serializeCostQAReport } from "@/transport-cost/qa";
 import { MapCanvas, type CameraCommand, type MapFeatureSelection } from "./MapCanvas";
 
 const initialDataset = ingestGeoJSON(sampleUrban, { name: "Synthetic urban sample", source: { kind: "bundled", name: "sample-urban.json" } });
@@ -54,9 +55,8 @@ export function MapWorkspace() {
   const commandId = useRef(0);
   const osmRequestRef = useRef<AbortController | null>(null);
   const graphResult = useMemo(() => {
-    const started = performance.now();
-    try { return { graph: buildTransportGraph(dataset), error: null, buildMilliseconds: performance.now() - started }; }
-    catch (error) { return { graph: null, error: error instanceof Error ? error.message : "Graph extraction failed.", buildMilliseconds: performance.now() - started }; }
+    try { return { graph: buildTransportGraph(dataset), error: null }; }
+    catch (error) { return { graph: null, error: error instanceof Error ? error.message : "Graph extraction failed." }; }
   }, [dataset]);
   const profiled = useMemo(() => graphResult.graph ? applyTransportProfile(graphResult.graph, scenario.transportProfileId) : null, [graphResult.graph, scenario.transportProfileId]);
   const costed = useMemo(() => profiled ? applyGeneralizedCosts(profiled) : null, [profiled]);
@@ -154,6 +154,7 @@ export function MapWorkspace() {
   }
 
   function selectMapFeature(selection: MapFeatureSelection) {
+    if (selection.kind === "edge" && profiled?.usableEdges.some((edge) => edge.id === selection.id)) setSelectedEdgeId(selection.id);
     if (scenarioMode === "source" && selection.kind === "node" && profiled?.activeNodeIds.has(selection.id)) updateScenario((current) => setTerminal(current, "source", selection.id));
     if (scenarioMode === "sink" && selection.kind === "node" && profiled?.activeNodeIds.has(selection.id)) updateScenario((current) => setTerminal(current, "sink", selection.id));
     if (scenarioMode === "block" && selection.kind === "edge" && profiled?.usableEdges.some((edge) => edge.id === selection.id)) { setSelectedEdgeId(selection.id); updateScenario((current) => toggleBlockedEdge(current, selection.id)); }
@@ -173,6 +174,10 @@ export function MapWorkspace() {
   const source = scenario.terminals.find((terminal) => terminal.role === "source");
   const sink = scenario.terminals.find((terminal) => terminal.role === "sink");
   const connectivity = prepared?.validation.sourceSinkConnectedAfterConstraints;
+  const selectedCost = costed?.edges.find((item) => item.edge.id === selectedEdgeId);
+  const selectedPrepared = prepared?.network?.edges.find((item) => item.graphEdgeId === selectedEdgeId);
+  const selectedPenalty = scenario.edgeConstraints.find((item) => item.edgeId === selectedEdgeId)?.penaltyMultiplier ?? 1;
+  const costQAUrl = costed ? `data:application/json;charset=utf-8,${encodeURIComponent(serializeCostQAReport(createCostQAReport(costed)))}` : null;
 
   return (
     <section className="map-workspace" aria-label="Physarum map workspace">
@@ -206,7 +211,6 @@ export function MapWorkspace() {
             <span>OSM ways <b>{osmSummary.wayCount}</b> · Skipped <b>{osmSummary.skippedElementCount}</b></span>
             <span>Missing topology anchors <b>{osmSummary.missingTopologyWayCount}</b></span>
             <span>Fetch <b>{osmSummary.fetchMilliseconds.toFixed(0)} ms</b> · Adapter <b>{osmSummary.adapterMilliseconds.toFixed(1)} ms</b></span>
-            <span>Graph build <b suppressHydrationWarning>{graphResult.buildMilliseconds.toFixed(1)} ms</b></span>
           </div>}
         </section>
         <section className="dataset-summary" aria-label="Dataset summary">
@@ -228,7 +232,6 @@ export function MapWorkspace() {
             <span>Merged {graphResult.graph.diagnostics.duplicateEdgesMerged} duplicates · Resolved {graphResult.graph.diagnostics.collinearOverlapsResolved} overlaps</span>
             <span>Ignored {graphResult.graph.diagnostics.gradeSeparatedCrossingsIgnored} grade-separated crossings · Rejected {graphResult.graph.diagnostics.zeroLengthEdgesRejected + graphResult.graph.diagnostics.selfLoopsRejected + graphResult.graph.diagnostics.invalidSegmentsRejected} invalid edges</span>
             <span>Snap tolerance {graphResult.graph.snapToleranceDegrees}° · Length meters</span>
-            <span suppressHydrationWarning>Build time {graphResult.buildMilliseconds.toFixed(1)} ms</span>
           </section>
         )}
         {graphResult.error && <div className="import-error" role="alert">{graphResult.error}</div>}
@@ -243,9 +246,25 @@ export function MapWorkspace() {
             <span>Physical <b>{profiled.accessDiagnostics.physicalEdgeCount}</b> · Allowed <b>{profiled.accessDiagnostics.allowedEdgeCount}</b> · Restricted <b>{profiled.accessDiagnostics.restrictedEdgeCount}</b> · Denied <b>{profiled.accessDiagnostics.deniedEdgeCount}</b> · Conditional <b>{profiled.accessDiagnostics.conditionalAccessExcluded}</b></span>
             <span>Explicitly allowed <b>{profiled.accessDiagnostics.explicitlyAllowed}</b> · Provenance conflicts <b>{profiled.accessDiagnostics.conflictingProvenance}</b></span>
             <span>One-way tagged edges <b>{profiled.accessDiagnostics.onewayTaggedNotEnforced}</b>. One-way restrictions are not yet enforced.</span>
-            {costed && <><span>Cost model <b>profile travel-time impedance</b></span><span>Median edge <b>{costed.diagnostics.medianTravelTimeSeconds.toFixed(1)} s</b> · Median <b>{costed.diagnostics.medianCostPerMeter.toFixed(3)} s/m</b></span><span>Explicit speed <b>{costed.diagnostics.explicitSpeedCount}</b> · Fallback speed <b>{costed.diagnostics.fallbackSpeedCount}</b> · Surface <b>{costed.diagnostics.surfaceTaggedCount}</b> · Smoothness <b>{costed.diagnostics.smoothnessTaggedCount}</b></span></>}
+            {costed && <><span>Cost model <b>profile travel-time impedance</b></span><span>Median edge <b>{costed.diagnostics.medianTravelTimeSeconds.toFixed(1)} s</b> · Median <b>{costed.diagnostics.medianCostPerMeter.toFixed(3)} s/m</b></span><span>Explicit speed <b>{costed.diagnostics.explicitSpeedCount}</b> · Fallback speed <b>{costed.diagnostics.fallbackSpeedCount}</b> · Surface <b>{costed.diagnostics.surfaceTaggedCount}</b> · Smoothness <b>{costed.diagnostics.smoothnessTaggedCount}</b> · Tracktype <b>{costed.diagnostics.tracktypeTaggedCount}</b></span></>}
           </div>
+          {costed && costQAUrl && <a className="run-physarum" href={costQAUrl} download={`physarum-cost-qa-${costed.profileId}.json`}>Export cost QA JSON</a>}
         </section>}
+        {selectedCost && <details className="scenario-section" open aria-label="Selected edge cost inspector">
+          <summary><strong>Edge cost inspector</strong> · {selectedCost.edge.id}</summary>
+          <div className="scenario-stats">
+            <span>Profile <b>{selectedCost.cost.profileId}</b> · Highway <b>{String(selectedCost.edge.provenance[0]?.sourceProperties.highway ?? "generic")}</b> · Access <b>allowed</b></span>
+            <span>Length <b>{selectedCost.cost.lengthMeters.toFixed(1)} m</b></span>
+            <span>Speed <b>{selectedCost.cost.speedKilometersPerHour.toFixed(1)} km/h</b> · <b>{selectedCost.cost.speedSource}</b></span>
+            <span>Evidence <b>{selectedCost.cost.speedEvidence}</b></span>
+            <span>Surface <b>{selectedCost.cost.surface ?? "missing / neutral"}</b> ×{selectedCost.cost.surfaceFactor.toFixed(2)}</span>
+            <span>Smoothness <b>{selectedCost.cost.smoothness ?? "missing / neutral"}</b> ×{selectedCost.cost.smoothnessFactor.toFixed(2)}</span>
+            <span>Tracktype <b>{selectedCost.cost.tracktype ?? "missing"}</b> ×{selectedCost.cost.tracktypeFactor.toFixed(2)} · Combined ×{selectedCost.cost.conditionFactor.toFixed(2)}</span>
+            <span>Base time <b>{selectedCost.cost.baseTravelTimeSeconds.toFixed(2)} s</b> · Profile cost <b>{selectedCost.cost.generalizedCostSeconds.toFixed(2)} s</b></span>
+            <span>Scenario ×<b>{selectedPenalty.toFixed(1)}</b> · Effective <b>{selectedPrepared?.effectiveCost.toFixed(2) ?? (selectedCost.cost.generalizedCostSeconds * selectedPenalty).toFixed(2)} s</b></span>
+            <span>Source <b>{selectedCost.cost.sourceFeatureId}</b> · Provenance conflict <b>{selectedCost.provenanceCostConflict ? "yes" : "no"}</b></span>
+          </div>
+        </details>}
         {prepared && (
           <section className="scenario-section" aria-label="Scenario controls">
             <div className="scenario-heading"><strong>Scenario</strong><span className={prepared.validation.valid ? "status-valid" : "status-invalid"}>{prepared.validation.valid ? "Valid" : "Invalid"}</span></div>

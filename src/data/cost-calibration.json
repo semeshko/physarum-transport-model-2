@@ -1,0 +1,15 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    { "type": "Feature", "id": "residential-asphalt", "properties": { "name": "Residential asphalt", "highway": "residential", "surface": "asphalt" }, "geometry": { "type": "LineString", "coordinates": [[24.000, 49.800], [24.001, 49.800]] } },
+    { "type": "Feature", "id": "footway", "properties": { "name": "Paved footway", "highway": "footway", "surface": "paving_stones" }, "geometry": { "type": "LineString", "coordinates": [[24.000, 49.801], [24.001, 49.801]] } },
+    { "type": "Feature", "id": "steps", "properties": { "name": "Steps", "highway": "steps" }, "geometry": { "type": "LineString", "coordinates": [[24.000, 49.802], [24.001, 49.802]] } },
+    { "type": "Feature", "id": "path-paved", "properties": { "name": "Paved path", "highway": "path", "surface": "asphalt" }, "geometry": { "type": "LineString", "coordinates": [[24.000, 49.803], [24.001, 49.803]] } },
+    { "type": "Feature", "id": "path-gravel", "properties": { "name": "Gravel path", "highway": "path", "surface": "gravel" }, "geometry": { "type": "LineString", "coordinates": [[24.000, 49.804], [24.001, 49.804]] } },
+    { "type": "Feature", "id": "cycleway", "properties": { "name": "Cycleway", "highway": "cycleway", "surface": "asphalt" }, "geometry": { "type": "LineString", "coordinates": [[24.000, 49.805], [24.001, 49.805]] } },
+    { "type": "Feature", "id": "primary-50", "properties": { "name": "Primary 50", "highway": "primary", "maxspeed": "50", "surface": "asphalt" }, "geometry": { "type": "LineString", "coordinates": [[24.000, 49.806], [24.001, 49.806]] } },
+    { "type": "Feature", "id": "secondary", "properties": { "name": "Secondary", "highway": "secondary", "surface": "asphalt" }, "geometry": { "type": "LineString", "coordinates": [[24.000, 49.807], [24.001, 49.807]] } },
+    { "type": "Feature", "id": "tertiary-30", "properties": { "name": "Tertiary 30", "highway": "tertiary", "maxspeed": "30", "surface": "asphalt" }, "geometry": { "type": "LineString", "coordinates": [[24.000, 49.808], [24.001, 49.808]] } },
+    { "type": "Feature", "id": "track-grade3", "properties": { "name": "Grade 3 track", "highway": "track", "tracktype": "grade3" }, "geometry": { "type": "LineString", "coordinates": [[24.000, 49.809], [24.001, 49.809]] } }
+  ]
+}

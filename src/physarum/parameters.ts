@@ -15,8 +15,9 @@ export const DEFAULT_PHYSARUM_PARAMETERS: PhysarumParameters = {
 
 export function resolvePhysarumParameters(overrides: Partial<PhysarumParameters> = {}): PhysarumParameters {
   const parameters = { ...DEFAULT_PHYSARUM_PARAMETERS, ...overrides };
-  const positive: Array<keyof PhysarumParameters> = ["initialConductivity", "adaptationRate", "decayRate", "hillK", "hillExponent", "timeStep", "convergenceTolerance", "minimumConductivity"];
+  const positive: Array<Exclude<keyof PhysarumParameters, "demandScaleKappa">> = ["initialConductivity", "adaptationRate", "decayRate", "hillK", "hillExponent", "timeStep", "convergenceTolerance", "minimumConductivity"];
   for (const key of positive) if (!Number.isFinite(parameters[key]) || parameters[key] <= 0) throw new PhysarumSolverError("invalid-parameters", `${key} must be finite and positive.`);
   if (!Number.isInteger(parameters.maxIterations) || parameters.maxIterations <= 0) throw new PhysarumSolverError("invalid-parameters", "maxIterations must be a positive integer.");
+  if (parameters.demandScaleKappa !== undefined && (!Number.isFinite(parameters.demandScaleKappa) || parameters.demandScaleKappa <= 0)) throw new PhysarumSolverError("invalid-parameters", "demandScaleKappa must be finite and positive when provided.");
   return parameters;
 }

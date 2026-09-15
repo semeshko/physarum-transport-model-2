@@ -10,12 +10,27 @@ export type PhysarumParameters = {
   readonly maxIterations: number;
   readonly convergenceTolerance: number;
   readonly minimumConductivity: number;
+  /** When set, the Hill threshold becomes `demandScaleKappa * Q_ref` (see
+   * `demandReferenceMagnitude`) instead of the fixed `hillK`, so uniformly
+   * rescaling terminal demand no longer changes network structure. Legacy
+   * absolute-flow mode (all existing behavior) is preserved when omitted. */
+  readonly demandScaleKappa?: number;
 };
 
 export type PhysarumTerminationReason = "converged" | "maxIterations" | "numericFailure";
 
 export type LinearSolveDiagnostics = { readonly method: "dense" | "conjugate-gradient"; readonly iterations: number; readonly converged: boolean; readonly residualNorm: number; readonly tolerance: number; readonly failureReason: string | null };
 export type PressureSolverOptions = { readonly method?: "dense" | "conjugate-gradient"; readonly relativeTolerance?: number; readonly absoluteTolerance?: number; readonly maxIterations?: number; readonly initialPressures?: Readonly<Record<string, number>> };
+
+/** Explicit model-scale metadata: no hidden automatic normalization. Every
+ * PhysarumState/report states which regime produced it and what Qref /
+ * effective K were actually used, so results can be reproduced from a
+ * report alone (Task 17 acceptance criterion). */
+export type PhysarumScaleInfo = {
+  readonly mode: "absolute" | "demandNormalized";
+  readonly qRef: number;
+  readonly effectiveHillK: number;
+};
 
 export type PhysarumDiagnostics = {
   readonly iteration: number;
@@ -35,6 +50,7 @@ export type PhysarumState = {
   readonly edgeConductivities: Readonly<Record<string, number>>;
   readonly edgeFlows: Readonly<Record<string, number>>;
   readonly diagnostics: PhysarumDiagnostics;
+  readonly scale: PhysarumScaleInfo;
   readonly converged: boolean;
   readonly terminationReason: PhysarumTerminationReason | null;
   readonly error: string | null;

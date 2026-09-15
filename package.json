@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "benchmark:solver": "vite-node scripts/benchmark-solver.ts",
-    "benchmark:physarum-sensitivity": "vite-node scripts/benchmark-physarum-sensitivity.ts"
+    "benchmark:physarum-sensitivity": "vite-node scripts/benchmark-physarum-sensitivity.ts",
+    "benchmark:physarum-regimes": "vite-node scripts/benchmark-physarum-regimes.ts"
   },
   "dependencies": {
     "maplibre-gl": "^6.9.0",

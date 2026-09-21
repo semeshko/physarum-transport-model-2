@@ -4,10 +4,15 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import sampleUrban from "@/data/sample-urban.json";
 import { buildTransportGraph } from "@/graph/build";
 import { createTransportWorkspaceRegistry, DEFAULT_GRAPH_LAYER_VISIBILITY, type GraphLayerVisibility } from "@/graph/map-registry";
+import { DEFAULT_DESIGN_ADAPTATION } from "@/design/adaptation";
+import { addDesignToRegistry } from "@/design/map-registry";
+import { buildDesignMesh, createDesignArea } from "@/design/mesh";
+import { assembleDesignNetwork, type DesignTerminal } from "@/design/network";
 import { GISIngestionError, ingestGeoJSON } from "@/gis/ingest";
 import { clipLineDatasetToBounds } from "@/gis/clip-lines";
 import { DEFAULT_GIS_LAYER_VISIBILITY, type GISLayerGroup, type GISLayerVisibility } from "@/gis/map-registry";
-import type { GISBounds, GISDataset } from "@/gis/types";
+import type { GISBounds, GISDataset, GISPosition } from "@/gis/types";
+import { useDesignRuntime } from "@/hooks/useDesignRuntime";
 import { usePhysarumRuntime } from "@/hooks/usePhysarumRuntime";
 import { addPhysarumResultToRegistry } from "@/physarum/map-registry";
 import { DEFAULT_PHYSARUM_PARAMETERS } from "@/physarum/parameters";
@@ -37,6 +42,16 @@ type CameraCommandInput =
   | { type: "zoom-in" | "zoom-out" | "reset" | "capture-bounds" }
   | { type: "fit-bounds"; bounds: NonNullable<GISDataset["bounds"]> };
 type ScenarioMode = "source" | "sink" | "block" | "penalty" | null;
+/** Analyze evaluates an existing network; Design evolves a conductivity field over a blank AOI. */
+type WorkspaceMode = "analyze" | "design";
+const DESIGN_SPACINGS = [200, 150, 120, 90, 60] as const;
+const DESIGN_RADII = [150, 250, 400, 600] as const;
+/**
+ * Design states that the existing transport network is not used, so showing the
+ * Analyze dataset over it is misleading. Geographic context comes from the
+ * basemap instead; barriers, when they are wired in, get their own layer.
+ */
+const DESIGN_GIS_VISIBILITY: GISLayerVisibility = { roadsPaths: false, buildings: false, water: false, green: false };
 
 export function MapWorkspace() {
   const [dataset, setDataset] = useState<GISDataset>(initialDataset);
@@ -57,7 +72,14 @@ export function MapWorkspace() {
   const [osmAreaError, setOSMAreaError] = useState<string | null>(null);
   const [osmLoading, setOSMLoading] = useState(false);
   const [osmSummary, setOSMSummary] = useState<OSMImportSummary | null>(null);
+  const [mode, setMode] = useState<WorkspaceMode>("analyze");
+  const [designBounds, setDesignBounds] = useState<GISBounds | null>(null);
+  const [designSpacing, setDesignSpacing] = useState<number>(120);
+  const [designRadius, setDesignRadius] = useState<number>(250);
+  const [designTerminals, setDesignTerminals] = useState<readonly DesignTerminal[]>([]);
+  const [designPlacement, setDesignPlacement] = useState<"source" | "sink" | null>(null);
   const physarum = usePhysarumRuntime();
+  const design = useDesignRuntime();
   const commandId = useRef(0);
   const osmRequestRef = useRef<AbortController | null>(null);
   const graphResult = useMemo(() => {
@@ -69,16 +91,34 @@ export function MapWorkspace() {
   const spatialConstraints = useMemo(() => createSpatialConstraintSet(dataset), [dataset]);
   const spatial = useMemo(() => costed ? applySpatialConstraints(costed, spatialConstraints, spatialPolicy) : null, [costed, spatialConstraints, spatialPolicy]);
   const prepared = useMemo(() => graphResult.graph && profiled && costed && spatial ? prepareNetwork(graphResult.graph, scenario, profiled, costed, spatial) : null, [costed, graphResult.graph, profiled, scenario, spatial]);
+  const designMode = mode === "design";
+  const designArea = useMemo(() => {
+    if (!designBounds) return null;
+    try { return createDesignArea(designBounds); } catch { return null; }
+  }, [designBounds]);
+  const designMesh = useMemo(() => {
+    if (!designArea) return { mesh: null, error: designBounds ? "The captured area is degenerate; capture a larger rectangle." : null };
+    try { return { mesh: buildDesignMesh(designArea, designSpacing), error: null }; }
+    catch (error) { return { mesh: null, error: error instanceof Error ? error.message : "The design mesh could not be built." }; }
+  }, [designArea, designBounds, designSpacing]);
+  const designAssembly = useMemo(
+    () => designMesh.mesh && designTerminals.length > 0 ? assembleDesignNetwork(designMesh.mesh, designTerminals) : null,
+    [designMesh.mesh, designTerminals],
+  );
+
   const registry = useMemo(() => {
     if (!graphResult.graph) return null;
     if (!profiled) return null;
-    const base = createTransportWorkspaceRegistry(dataset, graphResult.graph, profiled, visibility, graphVisibility);
-    const withCosts = costed ? addTransportCostsToRegistry(base, costed, costVisible) : base;
-    const withSpatial = spatial ? addSpatialImpactsToRegistry(withCosts, spatial, spatialVisible) : withCosts;
-    const withScenario = addScenarioToRegistry(withSpatial, graphResult.graph, scenario);
-    const withResult = addPhysarumResultToRegistry(withScenario, graphResult.graph, physarum.runtime.state);
-    return addOSMAreaToRegistry(withResult, osmBounds);
-  }, [costVisible, costed, dataset, graphResult.graph, graphVisibility, osmBounds, physarum.runtime.state, profiled, scenario, spatial, spatialVisible, visibility]);
+    // Design keeps the basemap context but hides the Analyze overlays, so the
+    // conductivity field is read on its own.
+    const base = createTransportWorkspaceRegistry(dataset, graphResult.graph, profiled, designMode ? DESIGN_GIS_VISIBILITY : visibility, designMode ? { edges: false, nodes: false } : graphVisibility);
+    const withCosts = costed ? addTransportCostsToRegistry(base, costed, costVisible && !designMode) : base;
+    const withSpatial = spatial ? addSpatialImpactsToRegistry(withCosts, spatial, spatialVisible && !designMode) : withCosts;
+    const withScenario = addScenarioToRegistry(withSpatial, graphResult.graph, designMode ? createEmptyScenario() : scenario);
+    const withResult = addPhysarumResultToRegistry(withScenario, graphResult.graph, designMode ? null : physarum.runtime.state);
+    const withOSM = addOSMAreaToRegistry(withResult, designMode ? null : osmBounds);
+    return addDesignToRegistry(withOSM, { active: designMode, area: designArea, mesh: designMesh.mesh, terminals: designTerminals, state: design.runtime.state });
+  }, [costVisible, costed, dataset, design.runtime.state, designArea, designMesh.mesh, designMode, designTerminals, graphResult.graph, graphVisibility, osmBounds, physarum.runtime.state, profiled, scenario, spatial, spatialVisible, visibility]);
 
   useEffect(() => () => osmRequestRef.current?.abort(), []);
 
@@ -96,6 +136,36 @@ export function MapWorkspace() {
     setScenarioMode(null);
     physarum.reset();
     setSelectedEdgeId("");
+  }
+
+  function captureBounds(bounds: GISBounds) {
+    if (mode === "design") { setDesignBounds(bounds); setDesignTerminals([]); setDesignPlacement(null); design.reset(); return; }
+    captureOSMArea(bounds);
+  }
+
+  function switchMode(next: WorkspaceMode) {
+    if (next === mode) return;
+    setMode(next);
+    setScenarioMode(null);
+    setDesignPlacement(null);
+  }
+
+  /** One source and one sink in the MVP; re-clicking a role moves it. */
+  function placeDesignTerminal(position: GISPosition) {
+    const role = designPlacement;
+    if (!role) return;
+    setDesignTerminals((current) => [...current.filter((terminal) => terminal.role !== role), { id: `design-${role}`, role, centre: position, radiusMeters: designRadius, magnitude: 1 }]);
+    design.reset();
+  }
+
+  function changeDesignSpacing(value: number) { setDesignSpacing(value); design.reset(); }
+  function changeDesignRadius(value: number) {
+    setDesignRadius(value);
+    setDesignTerminals((current) => current.map((terminal) => ({ ...terminal, radiusMeters: value })));
+    design.reset();
+  }
+  function clearDesign() {
+    setDesignBounds(null); setDesignTerminals([]); setDesignPlacement(null); design.reset();
   }
 
   function captureOSMArea(bounds: GISBounds) {
@@ -197,7 +267,7 @@ export function MapWorkspace() {
 
   return (
     <section className="map-workspace" aria-label="Physarum map workspace">
-      {registry && <MapCanvas cameraCommand={cameraCommand} projection={projection} registry={registry} onFeatureSelect={selectMapFeature} onBoundsCaptured={captureOSMArea} />}
+      {registry && <MapCanvas cameraCommand={cameraCommand} projection={projection} registry={registry} onFeatureSelect={selectMapFeature} onBoundsCaptured={captureBounds} onMapClick={designMode && designPlacement ? placeDesignTerminal : undefined} />}
       <aside className={`map-panel${panelCollapsed ? " is-collapsed" : ""}`} aria-label="GIS controls">
         <header className="panel-heading">
           <div><h1>Physarum Transport Model 2.0</h1><p>GIS ingestion foundation · EPSG:4326</p></div>
@@ -211,7 +281,11 @@ export function MapWorkspace() {
           <button className="control-button fit-button" type="button" disabled={!dataset.bounds} onClick={() => dataset.bounds && command({ type: "fit-bounds", bounds: dataset.bounds })}>Fit to dataset</button>
           <button className="control-button projection-button" type="button" aria-label={`Switch to ${projection === "mercator" ? "globe" : "Mercator"} projection`} onClick={() => setProjection((current) => current === "mercator" ? "globe" : "mercator")}>{projection === "mercator" ? "Globe" : "Mercator"}</button>
         </div>
-        <section className="scenario-section osm-section" aria-label="OpenStreetMap import">
+        <div className="scenario-actions" aria-label="Workspace mode">
+          <button type="button" aria-pressed={mode === "analyze"} onClick={() => switchMode("analyze")}>Analyze</button>
+          <button type="button" aria-pressed={mode === "design"} onClick={() => switchMode("design")}>Design</button>
+        </div>
+        {!designMode && <section className="scenario-section osm-section" aria-label="OpenStreetMap import">
           <div className="scenario-heading"><strong>OpenStreetMap network</strong><span>{osmLoading ? "Loading" : osmBounds ? "Area selected" : "No area"}</span></div>
           <p>Zoom to a small district, capture the visible rectangle, then load roads and paths.</p>
           <div className="runtime-actions">
@@ -230,7 +304,58 @@ export function MapWorkspace() {
             <span>Missing topology anchors <b>{osmSummary.missingTopologyWayCount}</b></span>
             <span>Fetch <b>{osmSummary.fetchMilliseconds.toFixed(0)} ms</b> · Adapter <b>{osmSummary.adapterMilliseconds.toFixed(1)} ms</b></span>
           </div>}
-        </section>
+        </section>}
+        {designMode && <section className="scenario-section design-section" aria-label="Design mode">
+          <div className="scenario-heading"><strong>Design AOI</strong><span>{designBounds ? "Area captured" : "No area"}</span></div>
+          <p>Capture the study area, then place a source and a sink. The field evolves over a blank triangular mesh; the existing road network is not used.</p>
+          <div className="runtime-actions">
+            <button className="run-physarum" type="button" onClick={() => command({ type: "capture-bounds" })}>Capture current view</button>
+            <button className="run-physarum reset-runtime" type="button" disabled={!designBounds} onClick={clearDesign}>Clear design</button>
+          </div>
+          {designArea && <div className="scenario-stats" aria-label="Design area summary">
+            <span>Extent <b>{(designArea.widthMeters / 1000).toFixed(2)} × {(designArea.heightMeters / 1000).toFixed(2)} km</b></span>
+            <span>Local projection error bound <b>{(designArea.projectionErrorBound * 100).toFixed(4)} %</b></span>
+          </div>}
+          <div className="scenario-actions" aria-label="Design mesh spacing">
+            {DESIGN_SPACINGS.map((value) => <button type="button" key={value} aria-pressed={designSpacing === value} onClick={() => changeDesignSpacing(value)}>{value} m</button>)}
+          </div>
+          {designMesh.error && <div className="import-error" role="alert">{designMesh.error}</div>}
+          {designMesh.mesh && <div className="scenario-stats" aria-label="Design mesh summary">
+            <span>Nodes <b>{designMesh.mesh.diagnostics.nodeCount}</b> · Edges <b>{designMesh.mesh.diagnostics.edgeCount}</b> · Mean degree <b>{designMesh.mesh.diagnostics.averageDegree.toFixed(2)}</b></span>
+            <span>Rows <b>{designMesh.mesh.diagnostics.rows}</b> ({designMesh.mesh.diagnostics.rowsAreOdd ? "odd — mirror symmetric" : "even"}) · Effective spacing <b>{designMesh.mesh.diagnostics.effectiveSpacingMeters.toFixed(1)} m</b></span>
+            <span>Transmissibility w/l <b>{designMesh.mesh.diagnostics.transmissibility.toFixed(4)}</b></span>
+          </div>}
+          <div className="scenario-actions" aria-label="Design marker placement">
+            <button type="button" aria-pressed={designPlacement === "source"} disabled={!designMesh.mesh} onClick={() => setDesignPlacement(designPlacement === "source" ? null : "source")}>Place source</button>
+            <button type="button" aria-pressed={designPlacement === "sink"} disabled={!designMesh.mesh} onClick={() => setDesignPlacement(designPlacement === "sink" ? null : "sink")}>Place sink</button>
+          </div>
+          <div className="penalty-row" aria-label="Design support radius">
+            {DESIGN_RADII.map((value) => <button type="button" key={value} aria-pressed={designRadius === value} onClick={() => changeDesignRadius(value)}>{value} m</button>)}
+          </div>
+          {designPlacement && <p className="scenario-hint">Click the map to place the {designPlacement}. Demand spreads over its {designRadius} m support region, never a single node.</p>}
+          {designAssembly && <div className="scenario-stats" aria-label="Design assembly summary">
+            <span>Usable edges <b>{designAssembly.diagnostics.usableEdgeCount}</b> of <b>{designAssembly.diagnostics.candidateEdgeCount}</b></span>
+            {designAssembly.diagnostics.terminals.map((terminal) => <span key={terminal.terminalId}>{terminal.terminalId} support <b>{terminal.nodeIds.length}</b> nodes · nearest node <b>{terminal.nearestDistanceMeters.toFixed(1)} m</b></span>)}
+            <span>Demand balance <b>{designAssembly.diagnostics.totalPositiveDemand.toFixed(3)} / {designAssembly.diagnostics.totalNegativeDemand.toFixed(3)}</b></span>
+          </div>}
+          {designAssembly?.issues.map((issue, index) => <div className="import-error" role="alert" key={`${issue.code}-${index}`}>{issue.message}</div>)}
+          <div className="scenario-heading"><strong>Design runtime</strong><span className={design.runtime.status === "completed" ? "status-valid" : design.runtime.status === "error" ? "status-invalid" : ""}>{design.runtime.status}</span></div>
+          <div className="runtime-actions">
+            {(design.runtime.status === "idle" || design.runtime.status === "completed" || design.runtime.status === "cancelled" || design.runtime.status === "error") && <button className="run-physarum" type="button" disabled={!designAssembly?.network} onClick={() => designAssembly?.network && design.start(designAssembly.network)}>Run field</button>}
+            {design.runtime.status === "running" && <button className="run-physarum" type="button" onClick={design.pause}>Pause</button>}
+            {design.runtime.status === "paused" && <button className="run-physarum" type="button" onClick={design.resume}>Resume</button>}
+            {(design.runtime.status === "running" || design.runtime.status === "paused" || design.runtime.status === "completed" || design.runtime.status === "error") && <button className="run-physarum reset-runtime" type="button" onClick={design.reset}>Reset runtime</button>}
+          </div>
+          {design.runtime.state && <div className="scenario-stats" aria-label="Design diagnostics">
+            <span>Iteration <b>{design.runtime.state.diagnostics.iteration} / {DEFAULT_DESIGN_ADAPTATION.maxIterations}</b></span>
+            <span>Termination <b>{design.runtime.state.diagnostics.terminationReason ?? "running"}</b></span>
+            <span>Max Δc <b>{design.runtime.state.diagnostics.maxDelta.toExponential(2)}</b> · tolerance <b>{DEFAULT_DESIGN_ADAPTATION.convergenceTolerance.toExponential(0)}</b></span>
+            <span>Energy <b>{design.runtime.state.diagnostics.energy.toExponential(3)}</b> · <b>{design.runtime.state.diagnostics.energyMonotone ? "monotone" : "not monotone"}</b></span>
+            <span>Kirchhoff residual <b>{design.runtime.state.diagnostics.maximumKirchhoffResidual.toExponential(2)}</b></span>
+            {design.runtime.error && <span className="status-invalid">{design.runtime.error}</span>}
+          </div>}
+          <p className="scenario-hint">Colour and width show conductivity density, normalized for display only. Task 18 stops at the field — no threshold, no corridor extraction, no proposed roads.</p>
+        </section>}
         <section className="dataset-summary" aria-label="Dataset summary">
           <strong>{dataset.name}</strong>
           <span>{dataset.featureCount} features · {dataset.geometryTypes.join(", ") || "No geometry"}</span>
@@ -253,7 +378,7 @@ export function MapWorkspace() {
           </section>
         )}
         {graphResult.error && <div className="import-error" role="alert">{graphResult.error}</div>}
-        {profiled && <section className="scenario-section" aria-label="Transport profile">
+        {!designMode && profiled && <section className="scenario-section" aria-label="Transport profile">
           <div className="scenario-heading"><strong>Transport mode</strong><span>{scenario.transportProfileId}</span></div>
           <div className="scenario-actions" aria-label="Transport mode selector">
             {TRANSPORT_PROFILE_IDS.map((profileId) => <button type="button" aria-pressed={scenario.transportProfileId === profileId} key={profileId} onClick={() => changeProfile(profileId)}>{profileId === "pedestrian" ? "Pedestrian" : profileId === "bicycle" ? "Bicycle" : "Motor"}</button>)}
@@ -268,7 +393,7 @@ export function MapWorkspace() {
           </div>
           {costed && costQAUrl && <a className="run-physarum" href={costQAUrl} download={`physarum-cost-qa-${costed.profileId}.json`}>Export cost QA JSON</a>}
         </section>}
-        {spatial && <section className="scenario-section" aria-label="Spatial constraints">
+        {!designMode && spatial && <section className="scenario-section" aria-label="Spatial constraints">
           <div className="scenario-heading"><strong>Spatial constraints</strong><span>{spatial.diagnostics.hardExcludedEdgeCount} hard · {spatial.diagnostics.softAffectedEdgeCount} soft</span></div>
           <div className="scenario-actions" aria-label="Spatial constraint controls">
             <button type="button" aria-pressed={spatialPolicy.buildings} onClick={() => updateSpatialPolicy("buildings", !spatialPolicy.buildings)}>Buildings {spatialPolicy.buildings ? "On" : "Off"}</button>
@@ -278,7 +403,7 @@ export function MapWorkspace() {
           <div className="scenario-stats"><span>Context: building <b>{spatialConstraints.counts.building}</b> · water <b>{spatialConstraints.counts.water}</b> · green <b>{spatialConstraints.counts.green}</b></span><span>Edges unaffected <b>{spatial.diagnostics.unaffectedEdgeCount}</b> · relation tests <b>{spatial.diagnostics.relationTestCount}</b></span><span>Exceptions: bridge <b>{spatial.diagnostics.bridgeExceptionCount}</b> · tunnel <b>{spatial.diagnostics.tunnelExceptionCount}</b> · passage <b>{spatial.diagnostics.buildingPassageExceptionCount}</b></span></div>
           {spatialQAUrl && <a className="run-physarum" href={spatialQAUrl} download={`physarum-spatial-qa-${spatial.profileId}.json`}>Export spatial QA JSON</a>}
         </section>}
-        {selectedCost && <details className="scenario-section" open aria-label="Selected edge cost inspector">
+        {!designMode && selectedCost && <details className="scenario-section" open aria-label="Selected edge cost inspector">
           <summary><strong>Edge cost inspector</strong> · {selectedCost.edge.id}</summary>
           <div className="scenario-stats">
             <span>Profile <b>{selectedCost.cost.profileId}</b> · Highway <b>{String(selectedCost.edge.provenance[0]?.sourceProperties.highway ?? "generic")}</b> · Access <b>allowed</b></span>
@@ -295,7 +420,7 @@ export function MapWorkspace() {
             <span>Source <b>{selectedCost.cost.sourceFeatureId}</b> · Provenance conflict <b>{selectedCost.provenanceCostConflict ? "yes" : "no"}</b></span>
           </div>
         </details>}
-        {prepared && (
+        {!designMode && prepared && (
           <section className="scenario-section" aria-label="Scenario controls">
             <div className="scenario-heading"><strong>Scenario</strong><span className={prepared.validation.valid ? "status-valid" : "status-invalid"}>{prepared.validation.valid ? "Valid" : "Invalid"}</span></div>
             <div className="scenario-stats">
@@ -323,7 +448,7 @@ export function MapWorkspace() {
             {prepared.validation.issues.length > 0 && <p className="scenario-hint">{prepared.validation.issues[0].message}</p>}
           </section>
         )}
-        {prepared && (
+        {!designMode && prepared && (
           <section className="scenario-section physarum-section" aria-label="Physarum controls">
             <div className="scenario-heading"><strong>Physarum runtime</strong><span className={physarum.runtime.status === "completed" ? "status-valid" : physarum.runtime.status === "error" ? "status-invalid" : ""}>{physarum.runtime.status}</span></div>
             <div className="runtime-actions">

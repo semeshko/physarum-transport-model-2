@@ -45,7 +45,8 @@ export const DEFAULT_DESIGN_ADAPTATION: DesignAdaptationParameters = {
 export type DesignFieldDiagnostics = {
   readonly iteration: number;
   readonly converged: boolean;
-  readonly terminationReason: "converged" | "maxIterations" | "numericFailure";
+  /** `null` while the run is still advancing; any other value is terminal. */
+  readonly terminationReason: "converged" | "maxIterations" | "numericFailure" | null;
   readonly maxDelta: number;
   readonly energy: number;
   readonly energyMonotone: boolean;
@@ -108,39 +109,87 @@ export function stepDesignField(
   return { conductivity: next, maxDelta, energy, pressures: hydraulic.pressures, flows: hydraulic.flows, kirchhoff: hydraulic.maximumKirchhoffResidual };
 }
 
-export function runDesignField(network: PreparedNetwork, overrides: Partial<DesignAdaptationParameters> = {}, pressureSolver: PressureSolverOptions = {}): DesignFieldState {
-  const parameters = resolveDesignAdaptation(overrides);
-  const widthById = new Map(network.edges.map((edge) => [edge.graphEdgeId, edge.lengthMeters / edge.effectiveCost]));
-  let conductivity: Record<string, number> = Object.fromEntries(network.edges.map((edge) => [edge.graphEdgeId, parameters.initialConductivity]));
-  let pressures: Readonly<Record<string, number>> = {}, flows: Readonly<Record<string, number>> = {};
-  let iteration = 0, maxDelta = Number.POSITIVE_INFINITY, energy = Number.NaN, kirchhoff = 0;
-  let previousEnergy = Number.POSITIVE_INFINITY, energyMonotone = true, converged = false;
+/**
+ * A Design run held open between steps, so the same evolution can be driven
+ * either to completion on the main thread (`runDesignField`) or one batch at a
+ * time from a Worker. It is a plain value: no DOM, no timers, no mutation.
+ */
+export type DesignSimulation = {
+  readonly network: PreparedNetwork;
+  readonly parameters: DesignAdaptationParameters;
+  readonly pressureSolver: PressureSolverOptions;
+  readonly state: DesignFieldState;
+  /** Energy of the previous accepted step, for the monotonicity check. */
+  readonly previousEnergy: number;
+};
 
+export function initializeDesignField(network: PreparedNetwork, overrides: Partial<DesignAdaptationParameters> = {}, pressureSolver: PressureSolverOptions = {}): DesignSimulation {
+  const parameters = resolveDesignAdaptation(overrides);
+  return {
+    network,
+    parameters,
+    pressureSolver,
+    state: {
+      conductivity: Object.fromEntries(network.edges.map((edge) => [edge.graphEdgeId, parameters.initialConductivity])),
+      edgeFlows: {},
+      nodePressures: {},
+      // Zero rather than empty: nothing has flowed yet, and a renderer should
+      // get a complete field for every candidate edge from the first frame.
+      fluxDensity: Object.fromEntries(network.edges.map((edge) => [edge.graphEdgeId, 0])),
+      diagnostics: { iteration: 0, converged: false, terminationReason: null, maxDelta: Number.POSITIVE_INFINITY, energy: Number.NaN, energyMonotone: true, maximumKirchhoffResidual: 0 },
+      error: null,
+    },
+    previousEnergy: Number.POSITIVE_INFINITY,
+  };
+}
+
+/** One IMEX step. Returns the simulation unchanged once it has terminated. */
+export function advanceDesignField(simulation: DesignSimulation): DesignSimulation {
+  const { network, parameters, pressureSolver, state } = simulation;
+  const { diagnostics } = state;
+  if (diagnostics.terminationReason !== null) return simulation;
+
+  let step: ReturnType<typeof stepDesignField>;
   try {
-    for (; iteration < parameters.maxIterations; iteration += 1) {
-      const step = stepDesignField(network, conductivity, parameters, pressureSolver);
-      conductivity = step.conductivity;
-      pressures = step.pressures;
-      flows = step.flows;
-      maxDelta = step.maxDelta;
-      energy = step.energy;
-      kirchhoff = step.kirchhoff;
-      if (energy > previousEnergy + 1e-12) energyMonotone = false;
-      previousEnergy = energy;
-      if (maxDelta < parameters.convergenceTolerance) { iteration += 1; converged = true; break; }
-    }
+    step = stepDesignField(network, state.conductivity, parameters, pressureSolver);
   } catch (error) {
     return {
-      conductivity, edgeFlows: flows, nodePressures: pressures, fluxDensity: {},
-      diagnostics: { iteration, converged: false, terminationReason: "numericFailure", maxDelta, energy, energyMonotone, maximumKirchhoffResidual: kirchhoff },
-      error: error instanceof Error ? error.message : "Unknown design adaptation failure.",
+      ...simulation,
+      state: {
+        ...state,
+        fluxDensity: {},
+        diagnostics: { ...diagnostics, converged: false, terminationReason: "numericFailure" },
+        error: error instanceof Error ? error.message : "Unknown design adaptation failure.",
+      },
     };
   }
 
-  const fluxDensity = Object.fromEntries(network.edges.map((edge) => [edge.graphEdgeId, Math.abs(flows[edge.graphEdgeId] ?? 0) / widthById.get(edge.graphEdgeId)!]));
+  const iteration = diagnostics.iteration + 1;
+  const converged = step.maxDelta < parameters.convergenceTolerance;
   return {
-    conductivity, edgeFlows: flows, nodePressures: pressures, fluxDensity,
-    diagnostics: { iteration, converged, terminationReason: converged ? "converged" : "maxIterations", maxDelta, energy, energyMonotone, maximumKirchhoffResidual: kirchhoff },
-    error: null,
+    ...simulation,
+    previousEnergy: step.energy,
+    state: {
+      conductivity: step.conductivity,
+      edgeFlows: step.flows,
+      nodePressures: step.pressures,
+      fluxDensity: Object.fromEntries(network.edges.map((edge) => [edge.graphEdgeId, Math.abs(step.flows[edge.graphEdgeId] ?? 0) / (edge.lengthMeters / edge.effectiveCost)])),
+      diagnostics: {
+        iteration,
+        converged,
+        terminationReason: converged ? "converged" : iteration >= parameters.maxIterations ? "maxIterations" : null,
+        maxDelta: step.maxDelta,
+        energy: step.energy,
+        energyMonotone: diagnostics.energyMonotone && !(step.energy > simulation.previousEnergy + 1e-12),
+        maximumKirchhoffResidual: step.kirchhoff,
+      },
+      error: null,
+    },
   };
+}
+
+export function runDesignField(network: PreparedNetwork, overrides: Partial<DesignAdaptationParameters> = {}, pressureSolver: PressureSolverOptions = {}): DesignFieldState {
+  let simulation = initializeDesignField(network, overrides, pressureSolver);
+  while (simulation.state.diagnostics.terminationReason === null) simulation = advanceDesignField(simulation);
+  return simulation.state;
 }

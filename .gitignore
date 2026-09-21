@@ -39,3 +39,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# maplibre worker chunks, copied from node_modules by scripts/copy-maplibre-worker.mjs
+/public/maplibre-gl-worker.mjs
+/public/maplibre-gl-shared.mjs
+
+# local research scratchpad — never committed
+/scratch/

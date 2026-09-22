@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { PreparedNetwork } from "../scenario/types";
 import type { DesignAdaptationParameters } from "../design/adaptation";
+import type { DesignScale } from "../design/scale";
 import { designRuntimeReducer, INITIAL_DESIGN_RUNTIME_STATE, type DesignWorkerRequest, type DesignWorkerResponse } from "../design/worker-protocol";
 
 export function useDesignRuntime() {
@@ -23,13 +24,13 @@ export function useDesignRuntime() {
 
   const send = useCallback((message: DesignWorkerRequest) => workerRef.current?.postMessage(message), []);
 
-  const start = useCallback((network: PreparedNetwork, parameters?: Partial<DesignAdaptationParameters>) => {
+  const start = useCallback((network: PreparedNetwork, scale?: DesignScale, parameters?: Partial<DesignAdaptationParameters>) => {
     if (activeRunId.current) send({ type: "CANCEL", runId: activeRunId.current });
     runSequence.current += 1;
     const runId = `design-${Date.now()}-${runSequence.current}`;
     activeRunId.current = runId;
     dispatch({ type: "LOCAL_START", runId });
-    send({ type: "START", runId, network, parameters });
+    send({ type: "START", runId, network, scale, parameters });
   }, [send]);
 
   const pause = useCallback(() => { if (activeRunId.current) send({ type: "PAUSE", runId: activeRunId.current }); }, [send]);

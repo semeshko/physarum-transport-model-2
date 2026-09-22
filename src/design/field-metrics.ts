@@ -122,14 +122,25 @@ export function crossSectionFluxProfile(
   // interval, which turns the comb into a flux-per-metre density that refines
   // with the mesh instead of tracking it.
   crossings.sort((a, b) => a.eta - b.eta);
+
+  // A crossing owns at most a couple of mesh pitches. Without this cap the
+  // interval beside a barrier stretches across the whole blocked span and
+  // smears flux into a region the network cannot reach, which would make an
+  // impermeable obstacle look permeable.
+  const spacings: number[] = [];
+  for (let i = 1; i < crossings.length; i += 1) spacings.push(crossings[i].eta - crossings[i - 1].eta);
+  const sortedSpacings = spacings.slice().sort((a, b) => a - b);
+  const medianSpacing = sortedSpacings.length ? sortedSpacings[Math.floor(sortedSpacings.length / 2)] : bins.binWidthMeters;
+  const halfExtentCap = Math.max(bins.binWidthMeters, 1.5 * medianSpacing) / 2;
+
   let capturedAbsolute = 0;
   for (let i = 0; i < crossings.length; i += 1) {
     const { eta, magnitude } = crossings[i];
     if (magnitude <= 0) continue;
     const previous = crossings[i - 1], next = crossings[i + 1];
     const fallback = previous || next ? Math.abs((next ?? previous).eta - eta) : bins.binWidthMeters;
-    const lower = previous ? (previous.eta + eta) / 2 : eta - fallback / 2;
-    const upper = next ? (next.eta + eta) / 2 : eta + fallback / 2;
+    const lower = Math.max(previous ? (previous.eta + eta) / 2 : eta - fallback / 2, eta - halfExtentCap);
+    const upper = Math.min(next ? (next.eta + eta) / 2 : eta + fallback / 2, eta + halfExtentCap);
     const span = upper - lower;
     if (!(span > 0)) continue;
     const first = Math.max(0, Math.floor((lower + bins.halfWidthMeters) / bins.binWidthMeters));
@@ -250,6 +261,26 @@ export function jensenShannonDistance(a: readonly number[], b: readonly number[]
     if (b[i] > 0) divergence += 0.5 * b[i] * Math.log2(b[i] / mean);
   }
   return Math.sqrt(Math.max(0, divergence));
+}
+
+/**
+ * How the transport through a cross-section splits either side of the axis.
+ *
+ * The primary barrier metric: with an obstacle straddling the centreline, the
+ * flow has to choose a side, and for symmetric geometry the two shares must
+ * match to within the mesh anisotropy already measured in Gate G. Field width
+ * alone cannot show this — a field can narrow for reasons that have nothing to
+ * do with an obstacle.
+ */
+export function crossSectionSideShares(section: CrossSection, bins: PhysicalBins, centreBandMeters = 0): { upper: number; lower: number; centre: number } {
+  let upper = 0, lower = 0, centre = 0;
+  for (const [index, value] of section.density.entries()) {
+    const eta = bins.centres[index];
+    if (Math.abs(eta) <= centreBandMeters) centre += value;
+    else if (eta > 0) upper += value;
+    else lower += value;
+  }
+  return { upper, lower, centre };
 }
 
 /** (max - min) / mean of a metric across orientations; 0 means perfectly isotropic. */

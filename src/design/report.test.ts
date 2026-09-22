@@ -103,19 +103,19 @@ describe("design report", () => {
 
 describe("design map layers", () => {
   const base = createLayerRegistry([], []);
-  const view = { active: true, area, mesh, terminals, state };
+  const view = { active: true, area, mesh, terminals, barriers: [], state };
 
   it("registers every design layer against a real source", () => {
     const registry = addDesignToRegistry(base, view);
     const sourceIds = new Set(registry.sources.map((source) => source.id));
-    expect(registry.layers.map((layer) => layer.id)).toEqual(["design-area", "design-mesh", "design-field", "design-support", "design-centre"]);
+    expect(registry.layers.map((layer) => layer.id)).toEqual(["design-area", "design-mesh", "design-field", "design-barrier-fill", "design-barrier-line", "design-support", "design-centre"]);
     for (const layer of registry.layers) expect(sourceIds.has(layer.source)).toBe(true);
   });
 
   it("hides every design layer outside Design mode but keeps the sources registered", () => {
     const registry = addDesignToRegistry(base, { ...view, active: false });
     expect(registry.layers.every((layer) => !layer.visible)).toBe(true);
-    expect(registry.sources).toHaveLength(5);
+    expect(registry.sources).toHaveLength(6);
   });
 
   it("shows the bare mesh before a run and the field after it", () => {
@@ -141,7 +141,7 @@ describe("design map layers", () => {
   });
 
   it("stays empty and hidden when nothing has been staged yet", () => {
-    const registry = addDesignToRegistry(base, { active: true, area: null, mesh: null, terminals: [], state: null });
+    const registry = addDesignToRegistry(base, { active: true, area: null, mesh: null, terminals: [], barriers: [], state: null });
     expect(registry.layers.every((layer) => !layer.visible)).toBe(true);
   });
 });

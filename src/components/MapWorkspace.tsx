@@ -6,6 +6,7 @@ import { buildTransportGraph } from "@/graph/build";
 import { createTransportWorkspaceRegistry, DEFAULT_GRAPH_LAYER_VISIBILITY, type GraphLayerVisibility } from "@/graph/map-registry";
 import { DESIGN_MODEL_VERSION, DESIGN_V2 } from "@/design/scale";
 import { addDesignToRegistry } from "@/design/map-registry";
+import { DEFAULT_DESIGN_BARRIER_POLICY, designBarriersFromDataset, type DesignBarrierPolicy } from "@/design/barrier-source";
 import { buildDesignMesh, createDesignArea } from "@/design/mesh";
 import { assembleDesignNetwork, type DesignTerminal } from "@/design/network";
 import { GISIngestionError, ingestGeoJSON } from "@/gis/ingest";
@@ -78,6 +79,10 @@ export function MapWorkspace() {
   const [designRadius, setDesignRadius] = useState<number>(250);
   const [designTerminals, setDesignTerminals] = useState<readonly DesignTerminal[]>([]);
   const [designPlacement, setDesignPlacement] = useState<"source" | "sink" | null>(null);
+  const [designContext, setDesignContext] = useState<GISDataset | null>(null);
+  const [designBarrierPolicy, setDesignBarrierPolicy] = useState<DesignBarrierPolicy>(DEFAULT_DESIGN_BARRIER_POLICY);
+  const [designContextLoading, setDesignContextLoading] = useState(false);
+  const [designContextError, setDesignContextError] = useState<string | null>(null);
   const physarum = usePhysarumRuntime();
   const design = useDesignRuntime();
   const commandId = useRef(0);
@@ -101,9 +106,10 @@ export function MapWorkspace() {
     try { return { mesh: buildDesignMesh(designArea, designSpacing), error: null }; }
     catch (error) { return { mesh: null, error: error instanceof Error ? error.message : "The design mesh could not be built." }; }
   }, [designArea, designBounds, designSpacing]);
+  const designBarrierSet = useMemo(() => designContext ? designBarriersFromDataset(designContext, designBarrierPolicy) : null, [designBarrierPolicy, designContext]);
   const designAssembly = useMemo(
-    () => designMesh.mesh && designTerminals.length > 0 ? assembleDesignNetwork(designMesh.mesh, designTerminals) : null,
-    [designMesh.mesh, designTerminals],
+    () => designMesh.mesh && designTerminals.length > 0 ? assembleDesignNetwork(designMesh.mesh, designTerminals, designBarrierSet?.barriers ?? []) : null,
+    [designBarrierSet, designMesh.mesh, designTerminals],
   );
 
   const registry = useMemo(() => {
@@ -117,8 +123,8 @@ export function MapWorkspace() {
     const withScenario = addScenarioToRegistry(withSpatial, graphResult.graph, designMode ? createEmptyScenario() : scenario);
     const withResult = addPhysarumResultToRegistry(withScenario, graphResult.graph, designMode ? null : physarum.runtime.state);
     const withOSM = addOSMAreaToRegistry(withResult, designMode ? null : osmBounds);
-    return addDesignToRegistry(withOSM, { active: designMode, area: designArea, mesh: designMesh.mesh, terminals: designTerminals, state: design.runtime.state });
-  }, [costVisible, costed, dataset, design.runtime.state, designArea, designMesh.mesh, designMode, designTerminals, graphResult.graph, graphVisibility, osmBounds, physarum.runtime.state, profiled, scenario, spatial, spatialVisible, visibility]);
+    return addDesignToRegistry(withOSM, { active: designMode, area: designArea, mesh: designMesh.mesh, terminals: designTerminals, barriers: designBarrierSet?.barriers ?? [], state: design.runtime.state });
+  }, [costVisible, costed, dataset, design.runtime.state, designArea, designBarrierSet, designMesh.mesh, designMode, designTerminals, graphResult.graph, graphVisibility, osmBounds, physarum.runtime.state, profiled, scenario, spatial, spatialVisible, visibility]);
 
   useEffect(() => () => osmRequestRef.current?.abort(), []);
 
@@ -139,7 +145,7 @@ export function MapWorkspace() {
   }
 
   function captureBounds(bounds: GISBounds) {
-    if (mode === "design") { setDesignBounds(bounds); setDesignTerminals([]); setDesignPlacement(null); design.reset(); return; }
+    if (mode === "design") { setDesignBounds(bounds); setDesignTerminals([]); setDesignPlacement(null); setDesignContext(null); setDesignContextError(null); design.reset(); return; }
     captureOSMArea(bounds);
   }
 
@@ -165,7 +171,37 @@ export function MapWorkspace() {
     design.reset();
   }
   function clearDesign() {
-    setDesignBounds(null); setDesignTerminals([]); setDesignPlacement(null); design.reset();
+    setDesignBounds(null); setDesignTerminals([]); setDesignPlacement(null); setDesignContext(null); setDesignContextError(null); design.reset();
+  }
+
+  /** Barriers are scientific input, so changing them invalidates the field that was computed without them. */
+  function changeBarrierPolicy(key: keyof DesignBarrierPolicy, enabled: boolean) {
+    setDesignBarrierPolicy((current) => ({ ...current, [key]: enabled }));
+    design.reset();
+  }
+
+  /** Offline path: an imported GeoJSON can supply the same barrier polygons when Overpass is unreachable. */
+  function useImportedBarriers() {
+    setDesignContextError(null);
+    setDesignContext(dataset);
+    design.reset();
+  }
+
+  async function loadDesignBarriers() {
+    if (!designBounds) return;
+    setDesignContextLoading(true);
+    setDesignContextError(null);
+    design.reset();
+    try {
+      const payload = await fetchOSMUrbanContext(designBounds);
+      const converted = overpassUrbanContextToGeoJSON(payload);
+      setDesignContext(ingestGeoJSON(converted.featureCollection, { name: `OSM urban context`, source: { kind: "osm", name: formatOSMBounds(designBounds) } }));
+    } catch (error) {
+      setDesignContext(null);
+      setDesignContextError(error instanceof Error ? error.message : "Urban context could not be loaded.");
+    } finally {
+      setDesignContextLoading(false);
+    }
   }
 
   function captureOSMArea(bounds: GISBounds) {
@@ -325,6 +361,24 @@ export function MapWorkspace() {
             <span>Rows <b>{designMesh.mesh.diagnostics.rows}</b> ({designMesh.mesh.diagnostics.rowsAreOdd ? "odd — mirror symmetric" : "even"}) · Effective spacing <b>{designMesh.mesh.diagnostics.effectiveSpacingMeters.toFixed(1)} m</b></span>
             <span>Transmissibility w/l <b>{designMesh.mesh.diagnostics.transmissibility.toFixed(4)}</b></span>
           </div>}
+          <section aria-label="Urban barriers">
+            <div className="scenario-heading"><strong>Urban barriers</strong><span>{designContextLoading ? "Loading" : designBarrierSet ? `${designBarrierSet.barriers.length} hard` : "Not loaded"}</span></div>
+            <div className="runtime-actions">
+              <button className="run-physarum" type="button" disabled={!designBounds || designContextLoading} onClick={loadDesignBarriers}>{designContextLoading ? "Loading…" : "Load buildings & water"}</button>
+              <button className="run-physarum" type="button" disabled={!designBounds} onClick={useImportedBarriers}>Use imported dataset</button>
+            </div>
+            <div className="scenario-actions" aria-label="Barrier policy">
+              <button type="button" aria-pressed={designBarrierPolicy.buildings} disabled={!designContext} onClick={() => changeBarrierPolicy("buildings", !designBarrierPolicy.buildings)}>Buildings {designBarrierPolicy.buildings ? "On" : "Off"}</button>
+              <button type="button" aria-pressed={designBarrierPolicy.water} disabled={!designContext} onClick={() => changeBarrierPolicy("water", !designBarrierPolicy.water)}>Water {designBarrierPolicy.water ? "On" : "Off"}</button>
+            </div>
+            {designContextError && <div className="import-error" role="alert">{designContextError} Design still runs offline without barriers.</div>}
+            {designBarrierSet && <div className="scenario-stats" aria-label="Barrier summary">
+              <span>Buildings <b>{designBarrierSet.buildingCount}</b> · Water polygons <b>{designBarrierSet.waterCount}</b> · Green (context only) <b>{designBarrierSet.greenContextCount}</b></span>
+              {designBarrierSet.skippedNonPolygonCount > 0 && <span>Skipped <b>{designBarrierSet.skippedNonPolygonCount}</b> non-polygon features — no area, so nothing to block.</span>}
+              {designAssembly && <span>Blocked edges: buildings <b>{designAssembly.diagnostics.blockedByBuildingCount}</b> · water <b>{designAssembly.diagnostics.blockedByWaterCount}</b></span>}
+            </div>}
+            <p className="scenario-hint">Design v0 does not generate crossings through buildings or polygonal water. A gap narrower than about one mesh spacing is numerically unresolved and may close — that is a resolution limit, not a barrier.</p>
+          </section>
           <div className="scenario-actions" aria-label="Design marker placement">
             <button type="button" aria-pressed={designPlacement === "source"} disabled={!designMesh.mesh} onClick={() => setDesignPlacement(designPlacement === "source" ? null : "source")}>Place source</button>
             <button type="button" aria-pressed={designPlacement === "sink"} disabled={!designMesh.mesh} onClick={() => setDesignPlacement(designPlacement === "sink" ? null : "sink")}>Place sink</button>
@@ -341,7 +395,7 @@ export function MapWorkspace() {
           {designAssembly?.issues.map((issue, index) => <div className="import-error" role="alert" key={`${issue.code}-${index}`}>{issue.message}</div>)}
           <div className="scenario-heading"><strong>Design runtime</strong><span className={design.runtime.status === "completed" ? "status-valid" : design.runtime.status === "error" ? "status-invalid" : ""}>{design.runtime.status}</span></div>
           <div className="runtime-actions">
-            {(design.runtime.status === "idle" || design.runtime.status === "completed" || design.runtime.status === "cancelled" || design.runtime.status === "error") && <button className="run-physarum" type="button" disabled={!designAssembly?.network} onClick={() => designAssembly?.network && design.start(designAssembly.network)}>Run field</button>}
+            {(design.runtime.status === "idle" || design.runtime.status === "completed" || design.runtime.status === "cancelled" || design.runtime.status === "error") && <button className="run-physarum" type="button" disabled={!designAssembly?.network} onClick={() => designAssembly?.network && design.start(designAssembly.network, designAssembly.scale ?? undefined)}>Run field</button>}
             {design.runtime.status === "running" && <button className="run-physarum" type="button" onClick={design.pause}>Pause</button>}
             {design.runtime.status === "paused" && <button className="run-physarum" type="button" onClick={design.resume}>Resume</button>}
             {(design.runtime.status === "running" || design.runtime.status === "paused" || design.runtime.status === "completed" || design.runtime.status === "error") && <button className="run-physarum reset-runtime" type="button" onClick={design.reset}>Reset runtime</button>}

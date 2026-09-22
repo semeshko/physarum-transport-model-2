@@ -2,6 +2,7 @@ import type { GISGeometry, GISPosition } from "../gis/types";
 import type { PreparedEdge, PreparedNetwork, ScenarioTerminal, TerminalRole } from "../scenario/types";
 import { geometryPolygons, relateSegmentToPolygons } from "../spatial-constraints/geometry";
 import { createLocalProjection } from "./projection";
+import { designScaleFromArea, type DesignScale } from "./scale";
 import type { DesignCandidateNetwork } from "./types";
 
 /**
@@ -50,6 +51,10 @@ export type DesignAssemblyDiagnostics = {
 
 export type DesignAssembly = {
   readonly network: PreparedNetwork | null;
+  /** Scale of the physical AOI. Barrier-independent by construction, so an
+   * OFF/ON comparison changes the geometry available to the flow and nothing
+   * else. Never derive it from the surviving edges. */
+  readonly scale: DesignScale | null;
   readonly issues: readonly DesignAssemblyIssue[];
   readonly diagnostics: DesignAssemblyDiagnostics;
 };
@@ -60,9 +65,74 @@ function projectBarrier(barrier: DesignBarrier, project: (position: GISPosition)
   return geometryPolygons(barrier.geometry).map((polygon) => polygon.map((ring) => ring.map((point) => project(point) as GISPosition)));
 }
 
-function blockedBy(a: GISPosition, b: GISPosition, polygons: readonly (readonly (readonly GISPosition[])[])[]): boolean {
-  const relation = relateSegmentToPolygons(a, b, polygons);
+type ProjectedBarrier = {
+  readonly polygons: readonly (readonly (readonly GISPosition[])[])[];
+  readonly bounds: readonly [number, number, number, number];
+};
+
+/** Metric-plane bounding box, so the exact segment/polygon test only runs on real candidates. */
+function projectedBounds(polygons: ProjectedBarrier["polygons"]): ProjectedBarrier["bounds"] {
+  let west = Infinity, south = Infinity, east = -Infinity, north = -Infinity;
+  for (const polygon of polygons) for (const ring of polygon) for (const [x, y] of ring) {
+    if (x < west) west = x;
+    if (x > east) east = x;
+    if (y < south) south = y;
+    if (y > north) north = y;
+  }
+  return [west, south, east, north];
+}
+
+function prepareBarriers(barriers: readonly DesignBarrier[], kind: DesignBarrier["kind"], project: (position: GISPosition) => readonly [number, number]): ProjectedBarrier[] {
+  return barriers.filter((barrier) => barrier.kind === kind).map((barrier) => {
+    const polygons = projectBarrier(barrier, project);
+    return { polygons, bounds: projectedBounds(polygons) };
+  });
+}
+
+/**
+ * An edge is blocked when it runs inside a barrier or crosses it.
+ *
+ * `boundary-touch` is deliberately NOT blocked: an edge that runs along a wall
+ * or clips a single corner point never passes through the interior, and
+ * blocking it would erode the domain by a mesh cell on every facade. Flow
+ * through a shared corner of two barriers is a measure-zero path and is
+ * covered by `design network barriers` tests.
+ */
+function blockedBy(a: GISPosition, b: GISPosition, barrier: ProjectedBarrier): boolean {
+  const [west, south, east, north] = barrier.bounds;
+  if (Math.max(a[0], b[0]) < west || Math.min(a[0], b[0]) > east || Math.max(a[1], b[1]) < south || Math.min(a[1], b[1]) > north) return false;
+  const relation = relateSegmentToPolygons(a, b, barrier.polygons);
   return relation.relation === "inside" || relation.relation === "intersects";
+}
+
+/**
+ * QA invariant: how many active edges actually pierce a hard barrier.
+ *
+ * Must always be 0. This recomputes the exact segment/polygon interior measure
+ * rather than sampling, because sampling cannot see a crossing: an edge can
+ * enter and leave a thin or oblique polygon with its midpoint — or any finite
+ * set of sample points — outside it. Kept out of `assembleDesignNetwork` so the
+ * cost is paid only when a report or a test asks for the proof.
+ */
+export function countBarrierCrossingEdges(
+  mesh: DesignCandidateNetwork,
+  network: PreparedNetwork,
+  barriers: readonly DesignBarrier[],
+): { crossingEdgeCount: number; maximumAffectedFraction: number } {
+  const projection = createLocalProjection(mesh.area.origin);
+  const metricById = new Map(mesh.nodes.map((node) => [node.id, node.metric as GISPosition]));
+  const projected = [...prepareBarriers(barriers, "building", projection.project), ...prepareBarriers(barriers, "water", projection.project)];
+  let crossingEdgeCount = 0, maximumAffectedFraction = 0;
+  for (const edge of network.edges) {
+    const a = metricById.get(edge.fromNodeId), b = metricById.get(edge.toNodeId);
+    if (!a || !b) continue;
+    for (const barrier of projected) {
+      const relation = relateSegmentToPolygons(a, b, barrier.polygons);
+      if (relation.affectedFraction > maximumAffectedFraction) maximumAffectedFraction = relation.affectedFraction;
+      if (relation.relation === "inside" || relation.relation === "intersects") { crossingEdgeCount += 1; break; }
+    }
+  }
+  return { crossingEdgeCount, maximumAffectedFraction };
 }
 
 export function assembleDesignNetwork(
@@ -75,15 +145,15 @@ export function assembleDesignNetwork(
   const metricById = new Map(mesh.nodes.map((node) => [node.id, node.metric]));
   const issues: DesignAssemblyIssue[] = [];
 
-  const buildings = barriers.filter((b) => b.kind === "building").map((b) => projectBarrier(b, projection.project));
-  const waters = barriers.filter((b) => b.kind === "water").map((b) => projectBarrier(b, projection.project));
+  const buildings = prepareBarriers(barriers, "building", projection.project);
+  const waters = prepareBarriers(barriers, "water", projection.project);
 
   let blockedByBuildingCount = 0, blockedByWaterCount = 0;
   const usable: PreparedEdge[] = [];
   for (const edge of mesh.edges) {
     const a = metricById.get(edge.fromNodeId) as GISPosition, b = metricById.get(edge.toNodeId) as GISPosition;
-    if (buildings.some((polygons) => blockedBy(a, b, polygons))) { blockedByBuildingCount += 1; continue; }
-    if (waters.some((polygons) => blockedBy(a, b, polygons))) { blockedByWaterCount += 1; continue; }
+    if (buildings.some((barrier) => blockedBy(a, b, barrier))) { blockedByBuildingCount += 1; continue; }
+    if (waters.some((barrier) => blockedBy(a, b, barrier))) { blockedByWaterCount += 1; continue; }
     // Gate D: conductance = sigma * w_e / l_e, so the solver's effectiveCost carries l_e / w_e.
     usable.push({ graphEdgeId: edge.id, fromNodeId: edge.fromNodeId, toNodeId: edge.toNodeId, lengthMeters: edge.lengthMeters, penaltyMultiplier: 1, effectiveCost: edge.lengthMeters / edge.widthMeters });
   }
@@ -135,7 +205,8 @@ export function assembleDesignNetwork(
     totalNegativeDemand,
   };
 
-  if (issues.length) return { network: null, issues, diagnostics };
+  const scale = totalPositiveDemand > 0 ? designScaleFromArea(mesh.area.areaSquareMeters, totalPositiveDemand) : null;
+  if (issues.length) return { network: null, scale, issues, diagnostics };
 
   const network: PreparedNetwork = {
     graphId: `design-${mesh.diagnostics.effectiveSpacingMeters.toFixed(3)}`,
@@ -147,7 +218,7 @@ export function assembleDesignNetwork(
     blockedEdgeCount: mesh.edges.length - usable.length,
     sourceSinkConnected: true,
   };
-  return { network, issues, diagnostics };
+  return { network, scale, issues, diagnostics };
 }
 
 function terminalsConnected(edges: readonly PreparedEdge[], terminals: readonly ScenarioTerminal[]): boolean {

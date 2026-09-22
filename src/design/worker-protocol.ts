@@ -1,5 +1,6 @@
 import type { PreparedNetwork } from "../scenario/types";
 import type { DesignAdaptationParameters, DesignFieldState } from "./adaptation";
+import type { DesignScale } from "./scale";
 
 /**
  * Design gets its own Worker channel rather than a mode flag on the Analyze
@@ -14,7 +15,16 @@ export const DESIGN_PROGRESS_INTERVAL = 5;
 export const DESIGN_BATCH_DELAY_MS = 50;
 
 export type DesignWorkerRequest =
-  | { readonly type: "START"; readonly runId: string; readonly network: PreparedNetwork; readonly parameters?: Partial<DesignAdaptationParameters> }
+  | {
+      readonly type: "START";
+      readonly runId: string;
+      readonly network: PreparedNetwork;
+      /** Barrier-independent AOI scale from assembleDesignNetwork. Without it
+       * the worker would infer the scale from the surviving edges, so adding a
+       * building would recalibrate the model rather than only block flow. */
+      readonly scale?: DesignScale;
+      readonly parameters?: Partial<DesignAdaptationParameters>;
+    }
   | { readonly type: "PAUSE"; readonly runId: string }
   | { readonly type: "RESUME"; readonly runId: string }
   | { readonly type: "CANCEL"; readonly runId: string };

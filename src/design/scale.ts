@@ -57,10 +57,13 @@ export const DESIGN_MODEL_VERSION = "design-hucai-v2" as const;
 
 export type DesignScale = {
   /**
-   * L0, metres: the square root of the meshed area. The sum runs over mesh
-   * elements, so its independence from resolution is a measured property, not a
-   * definition. Across 250..80 m spacing on a 3600 m square the spread is 1.0%
-   * and L0 recovers sqrt(AOI area) to within 1%. Asserted in scale.test.ts.
+   * L0, metres: the square root of the Design domain area.
+   *
+   * From designScaleFromArea this is the AOI directly. From
+   * designScaleFromNetwork it is summed over mesh elements, and its
+   * independence from resolution is then a measured property rather than a
+   * definition: across 250..80 m spacing on a 3600 m square the spread is 1.0%
+   * and it recovers sqrt(AOI area) to within 1%. Asserted in scale.test.ts.
    */
   readonly lengthMeters: number;
   /** Q0: total positive demand. */
@@ -92,6 +95,31 @@ export type DesignDimensionlessParameters = {
   readonly minimumElapsed: number;
 };
 
+/**
+ * Scale from the physical Design domain.
+ *
+ * This is the form to use whenever barriers are involved. `L0` must describe
+ * the AOI, not the unblocked remainder: otherwise adding buildings shrinks the
+ * meshed area, `nu` moves with it, and an A/B comparison silently recalibrates
+ * the model instead of only changing the geometry available to the flow.
+ * Barriers change where the flow may go; they must not change the scale it is
+ * measured in.
+ */
+export function designScaleFromArea(areaSquareMeters: number, demand: number, conductivityUnit = 1): DesignScale {
+  if (!(areaSquareMeters > 0) || !Number.isFinite(areaSquareMeters)) throw new Error("Design scale needs a positive domain area.");
+  if (!(demand > 0) || !Number.isFinite(demand)) throw new Error("Design scale needs positive total demand.");
+  if (!(conductivityUnit > 0) || !Number.isFinite(conductivityUnit)) throw new Error("Design conductivity unit must be finite and positive.");
+  return { lengthMeters: Math.sqrt(areaSquareMeters), demand, conductivity: conductivityUnit };
+}
+
+/**
+ * Scale inferred from a prepared network's own elements.
+ *
+ * Only valid when nothing has been removed from the mesh — the sum runs over
+ * the edges the network still has, so with barriers present it measures the
+ * unblocked remainder. Prefer `designScaleFromArea` in that case;
+ * `assembleDesignNetwork` returns the correct scale directly.
+ */
 export function designScaleFromNetwork(network: PreparedNetwork, conductivityUnit = 1): DesignScale {
   let doubledArea = 0;
   for (const edge of network.edges) {
@@ -180,7 +208,15 @@ export const DESIGN_V2: DesignDimensionlessParameters = {
   minimumElapsed: 1,
 };
 
-/** Design-v2 parameters for a specific network, with the scale derived from it. */
+/** Design-v2 parameters at an explicit scale. Preferred whenever barriers exist. */
+export function designV2Parameters(scale: DesignScale, overrides: Partial<DesignDimensionlessParameters> = {}): DesignAdaptationParameters {
+  return toAdaptationParameters(scale, { ...DESIGN_V2, ...overrides });
+}
+
+/**
+ * Design-v2 parameters with the scale inferred from the network itself.
+ * Only correct for an unmasked mesh — see .
+ */
 export function resolveDesignV2(network: PreparedNetwork, overrides: Partial<DesignDimensionlessParameters> = {}): DesignAdaptationParameters {
-  return toAdaptationParameters(designScaleFromNetwork(network), { ...DESIGN_V2, ...overrides });
+  return designV2Parameters(designScaleFromNetwork(network), overrides);
 }

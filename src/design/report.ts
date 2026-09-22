@@ -1,8 +1,25 @@
 import type { DesignAdaptationParameters, DesignFieldState } from "./adaptation";
 import type { DesignAssemblyDiagnostics } from "./network";
 import type { DesignCandidateNetwork } from "./types";
+import { DESIGN_MODEL_VERSION, type DesignScale } from "./scale";
 
 export const DESIGN_REPORT_SCHEMA_VERSION = "design-hucai-v2-1" as const;
+export const DESIGN_BARRIER_POLICY_VERSION = "design-barriers-v0-impermeable" as const;
+
+/** What the barrier layer did to the mesh, for reproducibility of a Design run. */
+export type DesignBarrierQA = {
+  readonly policyVersion: typeof DESIGN_BARRIER_POLICY_VERSION;
+  readonly policy: "buildings and polygonal water are impermeable; green is context only; no bridges or tunnels";
+  readonly buildingCount: number;
+  readonly waterCount: number;
+  readonly greenContextCount: number;
+  readonly skippedNonPolygonCount: number;
+  readonly blockedByBuildingCount: number;
+  readonly blockedByWaterCount: number;
+  readonly activeEdgeCount: number;
+  /** Must be 0: exact segment/polygon interior test, not sampling. */
+  readonly barrierCrossingEdgeCount: number;
+};
 
 export type DesignReport = {
   readonly schemaVersion: typeof DESIGN_REPORT_SCHEMA_VERSION;
@@ -35,6 +52,8 @@ export type DesignReport = {
     readonly conductivity: { readonly min: number; readonly median: number; readonly max: number; readonly integralOverArea: number };
     readonly fluxDensity: { readonly median: number; readonly max: number };
   };
+  readonly scale: { readonly modelVersion: typeof DESIGN_MODEL_VERSION; readonly lengthMeters: number; readonly demand: number; readonly conductivity: number } | null;
+  readonly barriers: DesignBarrierQA | null;
   readonly error: string | null;
 };
 
@@ -54,6 +73,8 @@ export function createDesignReport(
   assembly: DesignAssemblyDiagnostics,
   parameters: DesignAdaptationParameters,
   state: DesignFieldState,
+  scale: DesignScale | null = null,
+  barriers: DesignBarrierQA | null = null,
 ): DesignReport {
   const conductivities = Object.values(state.conductivity).slice().sort((a, b) => a - b);
   const fluxes = Object.values(state.fluxDensity).slice().sort((a, b) => a - b);
@@ -97,6 +118,8 @@ export function createDesignReport(
       conductivity: { min: conductivities[0] ?? Number.NaN, median: quantile(conductivities, 0.5), max: conductivities.at(-1) ?? Number.NaN, integralOverArea },
       fluxDensity: { median: quantile(fluxes, 0.5), max: fluxes.at(-1) ?? Number.NaN },
     },
+    scale: scale ? { modelVersion: DESIGN_MODEL_VERSION, lengthMeters: scale.lengthMeters, demand: scale.demand, conductivity: scale.conductivity } : null,
+    barriers,
     error: state.error,
   };
 }

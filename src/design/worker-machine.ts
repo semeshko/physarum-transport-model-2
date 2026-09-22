@@ -1,5 +1,5 @@
 import { advanceDesignField, initializeDesignField, type DesignSimulation } from "./adaptation";
-import { resolveDesignV2 } from "./scale";
+import { designV2Parameters, resolveDesignV2 } from "./scale";
 import type { DesignWorkerRequest, DesignWorkerResponse } from "./worker-protocol";
 
 /**
@@ -19,7 +19,8 @@ export class DesignWorkerMachine {
       try {
         // Design-v2 (Gate H): the scale is derived from the network, so the
         // regularizer stays a 0.1% perturbation instead of carrying the field.
-        this.simulation = initializeDesignField(message.network, { ...resolveDesignV2(message.network), ...message.parameters });
+        const scaled = message.scale ? designV2Parameters(message.scale) : resolveDesignV2(message.network);
+        this.simulation = initializeDesignField(message.network, { ...scaled, ...message.parameters });
         return { type: "STARTED", runId: message.runId, state: this.simulation.state };
       } catch (error) {
         this.simulation = null;

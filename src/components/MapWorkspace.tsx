@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import sampleUrban from "@/data/sample-urban.json";
 import { buildTransportGraph } from "@/graph/build";
 import { createTransportWorkspaceRegistry, DEFAULT_GRAPH_LAYER_VISIBILITY, type GraphLayerVisibility } from "@/graph/map-registry";
-import { DEFAULT_DESIGN_ADAPTATION } from "@/design/adaptation";
+import { DESIGN_MODEL_VERSION, DESIGN_V2 } from "@/design/scale";
 import { addDesignToRegistry } from "@/design/map-registry";
 import { buildDesignMesh, createDesignArea } from "@/design/mesh";
 import { assembleDesignNetwork, type DesignTerminal } from "@/design/network";
@@ -347,11 +347,13 @@ export function MapWorkspace() {
             {(design.runtime.status === "running" || design.runtime.status === "paused" || design.runtime.status === "completed" || design.runtime.status === "error") && <button className="run-physarum reset-runtime" type="button" onClick={design.reset}>Reset runtime</button>}
           </div>
           {design.runtime.state && <div className="scenario-stats" aria-label="Design diagnostics">
-            <span>Iteration <b>{design.runtime.state.diagnostics.iteration} / {DEFAULT_DESIGN_ADAPTATION.maxIterations}</b></span>
+            <span>Iteration <b>{design.runtime.state.diagnostics.iteration} / {DESIGN_V2.maxIterations}</b></span>
             <span>Termination <b>{design.runtime.state.diagnostics.terminationReason ?? "running"}</b></span>
-            <span>Max Δc <b>{design.runtime.state.diagnostics.maxDelta.toExponential(2)}</b> · tolerance <b>{DEFAULT_DESIGN_ADAPTATION.convergenceTolerance.toExponential(0)}</b></span>
+            <span>Max Δc <b>{design.runtime.state.diagnostics.maxDelta.toExponential(2)}</b> · tolerance <b>{DESIGN_V2.convergenceTolerance.toExponential(0)} · C0</b></span>
             <span>Energy <b>{design.runtime.state.diagnostics.energy.toExponential(3)}</b> · <b>{design.runtime.state.diagnostics.energyMonotone ? "monotone" : "not monotone"}</b></span>
             <span>Kirchhoff residual <b>{design.runtime.state.diagnostics.maximumKirchhoffResidual.toExponential(2)}</b></span>
+            {design.runtime.state.diagnostics.linearSolve && <span>Pressure solve <b>CG {design.runtime.state.diagnostics.linearSolve.iterations} iterations</b> · residual <b>{design.runtime.state.diagnostics.linearSolve.residualNorm.toExponential(2)}</b></span>}
+            <span>Model <b>{DESIGN_MODEL_VERSION}</b> · gamma <b>{DESIGN_V2.gamma}</b> · dt&#770; <b>{DESIGN_V2.timeStep}</b> · eps_r <b>{DESIGN_V2.backgroundRatio.toExponential(0)}</b></span>
             {design.runtime.error && <span className="status-invalid">{design.runtime.error}</span>}
           </div>}
           <p className="scenario-hint">Colour and width show conductivity density, normalized for display only. Task 18 stops at the field — no threshold, no corridor extraction, no proposed roads.</p>

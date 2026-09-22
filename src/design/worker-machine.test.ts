@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { GISBounds } from "../gis/types";
 import { runDesignField } from "./adaptation";
+import { resolveDesignV2 } from "./scale";
 import { buildDesignMesh, createDesignArea } from "./mesh";
 import { assembleDesignNetwork, type DesignTerminal } from "./network";
 import { createLocalProjection } from "./projection";
@@ -38,8 +39,17 @@ describe("design worker machine", () => {
     machine.handle({ type: "START", runId: "r1", network, parameters: { maxIterations: 40 } });
     const last = drain(machine, 7);
     expect(last?.type).toBe("COMPLETED");
-    // Batching is a scheduling detail; it must not change the science.
-    expect(last && "state" in last && last.state.conductivity).toEqual(runDesignField(network, { maxIterations: 40 }).conductivity);
+    // Batching is a scheduling detail; it must not change the science. The
+    // worker applies the Design-v2 scale, so the reference must use it too.
+    expect(last && "state" in last && last.state.conductivity).toEqual(runDesignField(network, { ...resolveDesignV2(network), maxIterations: 40 }).conductivity);
+  });
+
+  it("applies the Design-v2 scale by default rather than the raw v1 constants", () => {
+    const machine = new DesignWorkerMachine();
+    machine.handle({ type: "START", runId: "r1", network, parameters: { maxIterations: 40 } });
+    const batched = drain(machine, 7);
+    const v1 = runDesignField(network, { maxIterations: 40 });
+    expect(batched && "state" in batched && batched.state.conductivity).not.toEqual(v1.conductivity);
   });
 
   it("stops stepping while paused and continues from the same iteration on resume", () => {

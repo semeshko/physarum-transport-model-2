@@ -2,7 +2,7 @@ import type { DesignAdaptationParameters, DesignFieldState } from "./adaptation"
 import type { DesignAssemblyDiagnostics } from "./network";
 import type { DesignCandidateNetwork } from "./types";
 
-export const DESIGN_REPORT_SCHEMA_VERSION = "design-v0-continuum-1" as const;
+export const DESIGN_REPORT_SCHEMA_VERSION = "design-hucai-v2-1" as const;
 
 export type DesignReport = {
   readonly schemaVersion: typeof DESIGN_REPORT_SCHEMA_VERSION;

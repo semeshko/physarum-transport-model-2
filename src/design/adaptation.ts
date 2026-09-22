@@ -1,6 +1,6 @@
 import type { PreparedNetwork } from "../scenario/types";
 import { solveHydraulics } from "../physarum/hydraulics";
-import type { PressureSolverOptions } from "../physarum/types";
+import type { LinearSolveDiagnostics, PressureSolverOptions } from "../physarum/types";
 
 /**
  * Continuum adaptation for Design Mode (Hu-Cai / Haskovec-Markowich-Zampini):
@@ -51,6 +51,10 @@ export type DesignFieldDiagnostics = {
   readonly energy: number;
   readonly energyMonotone: boolean;
   readonly maximumKirchhoffResidual: number;
+  /** Health of the last hydraulic solve. Gate H needs this: the background
+   * regularizer is both a perturbation of the field and what bounds the
+   * conditioning of the Laplacian, so the two must be read together. */
+  readonly linearSolve: LinearSolveDiagnostics | null;
 };
 
 export type DesignFieldState = {
@@ -89,7 +93,7 @@ export function stepDesignField(
   conductivity: Readonly<Record<string, number>>,
   parameters: DesignAdaptationParameters,
   pressureSolver: PressureSolverOptions = {},
-): { conductivity: Record<string, number>; maxDelta: number; energy: number; pressures: Readonly<Record<string, number>>; flows: Readonly<Record<string, number>>; kirchhoff: number } {
+): { conductivity: Record<string, number>; maxDelta: number; energy: number; pressures: Readonly<Record<string, number>>; flows: Readonly<Record<string, number>>; kirchhoff: number; linearSolve: LinearSolveDiagnostics } {
   const hydraulic = solveHydraulics(network, Object.fromEntries(network.edges.map((edge) => [edge.graphEdgeId, conductivity[edge.graphEdgeId] + parameters.backgroundConductivity])), pressureSolver);
   const next: Record<string, number> = {};
   let maxDelta = 0, energy = 0;
@@ -106,7 +110,7 @@ export function stepDesignField(
     next[id] = value;
     maxDelta = Math.max(maxDelta, Math.abs(value - current));
   }
-  return { conductivity: next, maxDelta, energy, pressures: hydraulic.pressures, flows: hydraulic.flows, kirchhoff: hydraulic.maximumKirchhoffResidual };
+  return { conductivity: next, maxDelta, energy, pressures: hydraulic.pressures, flows: hydraulic.flows, kirchhoff: hydraulic.maximumKirchhoffResidual, linearSolve: hydraulic.linearSolve };
 }
 
 /**
@@ -136,7 +140,7 @@ export function initializeDesignField(network: PreparedNetwork, overrides: Parti
       // Zero rather than empty: nothing has flowed yet, and a renderer should
       // get a complete field for every candidate edge from the first frame.
       fluxDensity: Object.fromEntries(network.edges.map((edge) => [edge.graphEdgeId, 0])),
-      diagnostics: { iteration: 0, converged: false, terminationReason: null, maxDelta: Number.POSITIVE_INFINITY, energy: Number.NaN, energyMonotone: true, maximumKirchhoffResidual: 0 },
+      diagnostics: { iteration: 0, converged: false, terminationReason: null, maxDelta: Number.POSITIVE_INFINITY, energy: Number.NaN, energyMonotone: true, maximumKirchhoffResidual: 0, linearSolve: null },
       error: null,
     },
     previousEnergy: Number.POSITIVE_INFINITY,
@@ -180,8 +184,12 @@ export function advanceDesignField(simulation: DesignSimulation): DesignSimulati
         terminationReason: converged ? "converged" : iteration >= parameters.maxIterations ? "maxIterations" : null,
         maxDelta: step.maxDelta,
         energy: step.energy,
-        energyMonotone: diagnostics.energyMonotone && !(step.energy > simulation.previousEnergy + 1e-12),
+        // Relative, not absolute: an absolute 1e-12 slack is below roundoff once
+        // the energy is O(1), so a converged run flags its own last-digit noise
+        // as a monotonicity violation. Gate H measured exactly that.
+        energyMonotone: diagnostics.energyMonotone && !(step.energy > simulation.previousEnergy * (1 + 1e-9) + 1e-15),
         maximumKirchhoffResidual: step.kirchhoff,
+        linearSolve: step.linearSolve,
       },
       error: null,
     },

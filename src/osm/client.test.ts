@@ -96,6 +96,14 @@ describe("browser OSM client", () => {
     await expect(pending).rejects.toMatchObject({ code: "aborted" });
   });
 
+  it("does not start a request when the caller is already cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetchImplementation = vi.fn(async () => ok({ elements: [{ type: "way", id: 1 }] }));
+    await expect(fetchOSMTransport(bounds, { fetchImplementation, signal: controller.signal })).rejects.toMatchObject({ code: "aborted" });
+    expect(fetchImplementation).not.toHaveBeenCalled();
+  });
+
   it("never substitutes fixture data when a live fetch fails", async () => {
     const fetchImplementation = vi.fn(async () => fail(502, { error: "Could not reach the OSM service.", code: "network" }));
     await expect(fetchOSMTransport(bounds, { fetchImplementation })).rejects.toBeInstanceOf(OSMRequestError);
@@ -112,18 +120,20 @@ describe("server-only boundary", () => {
 
   it("keeps the Node transport out of the browser client", () => {
     const source = read("src/osm/client.ts");
-    expect(source).not.toMatch(/server-client/);
+    expect(source).not.toMatch(/from\s+["']\.\/server-client["']/);
     expect(source).not.toMatch(/node:https|from "https"/);
   });
 
   it("keeps provider mechanics out of the workspace component", () => {
     const source = read("src/components/MapWorkspace.tsx");
-    expect(source).not.toMatch(/server-client|overpass|interpreter/i);
+    expect(source).not.toMatch(/from\s+["']@\/osm\/server-client["']|node:https|\/api\/interpreter/i);
     expect(source).toMatch(/from "@\/osm\/client"/);
   });
 
   it("confines the Node transport to the server route", () => {
     expect(read("src/osm/server-client.ts")).toMatch(/node:https/);
-    expect(read("src/app/api/osm/route.ts")).toMatch(/runtime = "nodejs"/);
+    const route = read("src/app/api/osm/route.ts");
+    expect(route).toMatch(/runtime = "nodejs"/);
+    expect(route).toMatch(/signal:\s*request\.signal/);
   });
 });

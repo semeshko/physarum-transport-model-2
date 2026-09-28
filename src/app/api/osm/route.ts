@@ -26,7 +26,7 @@ export async function GET(request: Request) {
   }
   try {
     const bounds = parseBoundsParameter(searchParams.get("bbox"));
-    const result = await requestOverpass(requested as OSMQueryKind, bounds);
+    const result = await requestOverpass(requested as OSMQueryKind, bounds, { signal: request.signal });
     return NextResponse.json(result.payload, {
       headers: {
         "Cache-Control": "private, no-store",

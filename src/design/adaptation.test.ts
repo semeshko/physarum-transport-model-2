@@ -45,6 +45,7 @@ describe("design adaptation parameters", () => {
     expect(DEFAULT_DESIGN_ADAPTATION.gamma).toBe(1.5);
     expect(DEFAULT_DESIGN_ADAPTATION.nu).toBe(1);
     expect(DEFAULT_DESIGN_ADAPTATION.timeStep).toBe(0.5);
+    expect(DEFAULT_DESIGN_ADAPTATION.minimumSimulationTime).toBe(0);
   });
 
   it("rejects gamma <= 1, which has no p-Laplacian steady state", () => {

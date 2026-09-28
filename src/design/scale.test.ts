@@ -220,6 +220,7 @@ describe("scale-aware convergence", () => {
     const crawling = runDesignField(base.network, { ...parameters, timeStep: parameters.timeStep * 1e-9, maxIterations: 20 });
     const elapsed = crawling.diagnostics.iteration * DESIGN_V2.timeStep * 1e-9;
     expect(elapsed).toBeLessThan(DESIGN_V2.minimumElapsed);
+    expect(crawling.diagnostics).toMatchObject({ converged: false, terminationReason: "maxIterations" });
     const unchanged = Math.max(...Object.values(crawling.conductivity)) / parameters.initialConductivity;
     expect(unchanged).toBeCloseTo(1, 6);
   });

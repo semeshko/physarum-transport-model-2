@@ -26,6 +26,8 @@ export type DesignAdaptationParameters = {
   readonly initialConductivity: number;
   /** Validated in Gate F: dt = 0.5 converges in ~100 steps; dt = 2 diverges. */
   readonly timeStep: number;
+  /** Minimum dimensional simulation time before convergence may be reported. */
+  readonly minimumSimulationTime: number;
   readonly maxIterations: number;
   readonly convergenceTolerance: number;
   readonly minimumConductivity: number;
@@ -37,6 +39,7 @@ export const DEFAULT_DESIGN_ADAPTATION: DesignAdaptationParameters = {
   backgroundConductivity: 1e-3,
   initialConductivity: 1,
   timeStep: 0.5,
+  minimumSimulationTime: 0,
   maxIterations: 1_000,
   convergenceTolerance: 1e-7,
   minimumConductivity: 1e-9,
@@ -73,6 +76,7 @@ export function resolveDesignAdaptation(overrides: Partial<DesignAdaptationParam
   for (const key of ["gamma", "nu", "backgroundConductivity", "initialConductivity", "timeStep", "convergenceTolerance", "minimumConductivity"] as const) {
     if (!Number.isFinite(parameters[key]) || parameters[key] <= 0) throw new Error(`Design adaptation ${key} must be finite and positive.`);
   }
+  if (!Number.isFinite(parameters.minimumSimulationTime) || parameters.minimumSimulationTime < 0) throw new Error("Design adaptation minimumSimulationTime must be finite and non-negative.");
   if (parameters.gamma <= 1) throw new Error("Design adaptation gamma must exceed 1 (p = 2*gamma/(gamma-1) requires gamma > 1).");
   if (!Number.isInteger(parameters.maxIterations) || parameters.maxIterations <= 0) throw new Error("Design adaptation maxIterations must be a positive integer.");
   return parameters;
@@ -169,7 +173,8 @@ export function advanceDesignField(simulation: DesignSimulation): DesignSimulati
   }
 
   const iteration = diagnostics.iteration + 1;
-  const converged = step.maxDelta < parameters.convergenceTolerance;
+  const elapsedTime = iteration * parameters.timeStep;
+  const converged = step.maxDelta < parameters.convergenceTolerance && elapsedTime >= parameters.minimumSimulationTime;
   return {
     ...simulation,
     previousEnergy: step.energy,

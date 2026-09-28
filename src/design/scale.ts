@@ -156,6 +156,7 @@ export function timeStepFromDimensionless(scale: DesignScale, gamma: number, dim
 export function toAdaptationParameters(scale: DesignScale, parameters: DesignDimensionlessParameters): DesignAdaptationParameters {
   const { gamma } = parameters;
   const nu = metabolicCoefficient(scale, gamma);
+  const inverseTimeScale = 1 / (nu * scale.conductivity ** (gamma - 2));
   return {
     gamma,
     nu,
@@ -163,6 +164,7 @@ export function toAdaptationParameters(scale: DesignScale, parameters: DesignDim
     minimumConductivity: parameters.minimumRatio * scale.conductivity,
     initialConductivity: parameters.initialRatio * scale.conductivity,
     timeStep: timeStepFromDimensionless(scale, gamma, parameters.timeStep),
+    minimumSimulationTime: parameters.minimumElapsed * inverseTimeScale,
     convergenceTolerance: parameters.convergenceTolerance * scale.conductivity,
     maxIterations: parameters.maxIterations,
   };

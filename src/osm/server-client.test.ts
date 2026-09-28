@@ -24,7 +24,7 @@ describe("server-side Overpass client", () => {
 
   it("sends that identity on the wire", async () => {
     let seen: string | undefined;
-    const transport: OverpassTransport = async (_endpoint, _body, _timeout) => { seen = overpassUserAgent(); return respond(payload()); };
+    const transport: OverpassTransport = async () => { seen = overpassUserAgent(); return respond(payload()); };
     await requestOverpass("transport", bounds, { transport });
     expect(seen).toMatch(/^physarum-transport-model-2\//);
   });
@@ -74,6 +74,22 @@ describe("server-side Overpass client", () => {
   it("propagates a timeout from the transport", async () => {
     const transport: OverpassTransport = async () => { throw new OSMRequestError("timeout", "timed out"); };
     await expect(requestOverpass("transport", bounds, { transport })).rejects.toMatchObject({ code: "timeout" });
+  });
+
+  it("does not contact a mirror when the request is already cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const transport = vi.fn<OverpassTransport>(async () => respond(payload()));
+    await expect(requestOverpass("transport", bounds, { transport, signal: controller.signal })).rejects.toMatchObject({ code: "aborted" });
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it("passes the caller signal to the provider transport", async () => {
+    const controller = new AbortController();
+    let seen: AbortSignal | undefined;
+    const transport: OverpassTransport = async (...arguments_) => { seen = arguments_[3]; return respond(payload()); };
+    await requestOverpass("transport", bounds, { transport, signal: controller.signal });
+    expect(seen).toBe(controller.signal);
   });
 
   it("reports an unreachable provider after exhausting every mirror", async () => {

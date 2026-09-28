@@ -67,6 +67,10 @@ type RawResponse = { status: number; headers: NodeJS.Dict<string | string[]>; bo
 
 function post(endpoint: string, body: string, timeoutMilliseconds: number, signal?: AbortSignal): Promise<RawResponse> {
   return new Promise<RawResponse>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new OSMRequestError("aborted", "The previous OSM request was cancelled."));
+      return;
+    }
     const request = https.request(
       endpoint,
       {
@@ -111,7 +115,9 @@ function post(endpoint: string, body: string, timeoutMilliseconds: number, signa
     );
     request.on("timeout", () => { request.destroy(); reject(new OSMRequestError("timeout", "The OSM request timed out. Select a smaller area or try again.")); });
     request.on("error", (error) => reject(error instanceof OSMRequestError ? error : new OSMRequestError("network", "Could not reach the OSM service. Check your connection and try again.")));
-    signal?.addEventListener("abort", () => { request.destroy(); reject(new OSMRequestError("aborted", "The previous OSM request was cancelled.")); }, { once: true });
+    const abort = () => request.destroy(new OSMRequestError("aborted", "The previous OSM request was cancelled."));
+    signal?.addEventListener("abort", abort, { once: true });
+    request.on("close", () => signal?.removeEventListener("abort", abort));
     request.write(body);
     request.end();
   });
@@ -143,6 +149,7 @@ const cache = new Map<string, { at: number; result: OverpassResult }>();
 export function clearOverpassCache(): void { cache.clear(); }
 
 export async function requestOverpass(kind: OSMQueryKind, bounds: GISBounds, options: OverpassRequestOptions = {}): Promise<OverpassResult & { cached: boolean }> {
+  if (options.signal?.aborted) throw new OSMRequestError("aborted", "The previous OSM request was cancelled.");
   const query = createQuery(kind, bounds);
   const key = `${kind}|${query}`;
   const hit = cache.get(key);

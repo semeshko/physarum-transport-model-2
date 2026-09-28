@@ -21,6 +21,7 @@ async function fetchViaServer(kind: OSMQueryKind, bounds: GISBounds, options: Re
   // Refuse an oversized viewport here rather than spending a round trip and a
   // volunteer-run Overpass slot to be told the same thing.
   validateOSMArea(bounds);
+  if (options.signal?.aborted) throw new OSMRequestError("aborted", "The previous OSM request was cancelled.");
   const controller = new AbortController();
   let timedOut = false;
   const abortFromCaller = () => controller.abort();

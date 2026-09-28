@@ -103,7 +103,7 @@ describe("design report", () => {
 
 describe("design map layers", () => {
   const base = createLayerRegistry([], []);
-  const view = { active: true, area, mesh, terminals, barriers: [], state };
+  const view = { active: true, area, mesh, meshVisible: true, terminals, barriers: [], state };
 
   it("registers every design layer against a real source", () => {
     const registry = addDesignToRegistry(base, view);
@@ -118,13 +118,23 @@ describe("design map layers", () => {
     expect(registry.sources).toHaveLength(6);
   });
 
-  it("shows the bare mesh before a run and the field after it", () => {
+  it("shows the field once a run exists, independently of the mesh toggle", () => {
     const before = addDesignToRegistry(base, { ...view, state: null });
-    expect(before.layers.find((layer) => layer.id === "design-mesh")!.visible).toBe(true);
     expect(before.layers.find((layer) => layer.id === "design-field")!.visible).toBe(false);
     const after = addDesignToRegistry(base, view);
-    expect(after.layers.find((layer) => layer.id === "design-mesh")!.visible).toBe(false);
     expect(after.layers.find((layer) => layer.id === "design-field")!.visible).toBe(true);
+  });
+
+  /**
+   * The triangular mesh is a computational artefact, not an urban pattern, so
+   * its visibility is the user's explicit choice rather than something the
+   * renderer decides from whether a field happens to exist.
+   */
+  it("lets the numerical mesh be hidden at any stage", () => {
+    for (const state of [null, view.state]) {
+      expect(addDesignToRegistry(base, { ...view, state, meshVisible: true }).layers.find((layer) => layer.id === "design-mesh")!.visible).toBe(true);
+      expect(addDesignToRegistry(base, { ...view, state, meshVisible: false }).layers.find((layer) => layer.id === "design-mesh")!.visible).toBe(false);
+    }
   });
 
   it("draws each marker's support as a metric radius, not a screen-sized dot", () => {
@@ -141,7 +151,7 @@ describe("design map layers", () => {
   });
 
   it("stays empty and hidden when nothing has been staged yet", () => {
-    const registry = addDesignToRegistry(base, { active: true, area: null, mesh: null, terminals: [], barriers: [], state: null });
+    const registry = addDesignToRegistry(base, { active: true, area: null, mesh: null, meshVisible: true, terminals: [], barriers: [], state: null });
     expect(registry.layers.every((layer) => !layer.visible)).toBe(true);
   });
 });

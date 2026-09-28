@@ -37,7 +37,14 @@ import { DEFAULT_SPATIAL_POLICY, type SpatialConstraintPolicy } from "@/spatial-
 import { createSpatialQAReport, serializeSpatialQAReport } from "@/spatial-constraints/qa";
 import { MapCanvas, type CameraCommand, type MapFeatureSelection } from "./MapCanvas";
 
-const initialDataset = ingestGeoJSON(sampleUrban, { name: "Synthetic urban sample", source: { kind: "bundled", name: "sample-urban.json" } });
+/**
+ * Analyze starts empty. The synthetic fixture used to be the startup dataset,
+ * which put small straight test edges over a real basemap where they read as
+ * proposed roads. It stays available behind an explicit action, and stays in
+ * the test suite, but it is no longer what a user sees first.
+ */
+const EMPTY_DATASET = ingestGeoJSON({ type: "FeatureCollection", features: [] }, { name: "No data loaded", source: { kind: "bundled", name: "empty" } });
+const SYNTHETIC_SAMPLE = () => ingestGeoJSON(sampleUrban, { name: "Synthetic urban sample (test fixture)", source: { kind: "bundled", name: "sample-urban.json" } });
 const LAYER_LABELS: Readonly<Record<GISLayerGroup, string>> = { roadsPaths: "Original transport", buildings: "Buildings", water: "Water", green: "Green areas" };
 type CameraCommandInput =
   | { type: "zoom-in" | "zoom-out" | "reset" | "capture-bounds" }
@@ -55,7 +62,7 @@ const DESIGN_RADII = [150, 250, 400, 600] as const;
 const DESIGN_GIS_VISIBILITY: GISLayerVisibility = { roadsPaths: false, buildings: false, water: false, green: false };
 
 export function MapWorkspace() {
-  const [dataset, setDataset] = useState<GISDataset>(initialDataset);
+  const [dataset, setDataset] = useState<GISDataset>(EMPTY_DATASET);
   const [visibility, setVisibility] = useState<GISLayerVisibility>(DEFAULT_GIS_LAYER_VISIBILITY);
   const [graphVisibility, setGraphVisibility] = useState<GraphLayerVisibility>(DEFAULT_GRAPH_LAYER_VISIBILITY);
   const [costVisible, setCostVisible] = useState(false);
@@ -79,6 +86,7 @@ export function MapWorkspace() {
   const [designRadius, setDesignRadius] = useState<number>(250);
   const [designTerminals, setDesignTerminals] = useState<readonly DesignTerminal[]>([]);
   const [designPlacement, setDesignPlacement] = useState<"source" | "sink" | null>(null);
+  const [designMeshVisible, setDesignMeshVisible] = useState(true);
   const [designContext, setDesignContext] = useState<GISDataset | null>(null);
   const [designBarrierPolicy, setDesignBarrierPolicy] = useState<DesignBarrierPolicy>(DEFAULT_DESIGN_BARRIER_POLICY);
   const [designContextLoading, setDesignContextLoading] = useState(false);
@@ -123,8 +131,8 @@ export function MapWorkspace() {
     const withScenario = addScenarioToRegistry(withSpatial, graphResult.graph, designMode ? createEmptyScenario() : scenario);
     const withResult = addPhysarumResultToRegistry(withScenario, graphResult.graph, designMode ? null : physarum.runtime.state);
     const withOSM = addOSMAreaToRegistry(withResult, designMode ? null : osmBounds);
-    return addDesignToRegistry(withOSM, { active: designMode, area: designArea, mesh: designMesh.mesh, terminals: designTerminals, barriers: designBarrierSet?.barriers ?? [], state: design.runtime.state });
-  }, [costVisible, costed, dataset, design.runtime.state, designArea, designBarrierSet, designMesh.mesh, designMode, designTerminals, graphResult.graph, graphVisibility, osmBounds, physarum.runtime.state, profiled, scenario, spatial, spatialVisible, visibility]);
+    return addDesignToRegistry(withOSM, { active: designMode, area: designArea, mesh: designMesh.mesh, meshVisible: designMeshVisible, terminals: designTerminals, barriers: designBarrierSet?.barriers ?? [], state: design.runtime.state });
+  }, [costVisible, costed, dataset, design.runtime.state, designArea, designBarrierSet, designMesh.mesh, designMeshVisible, designMode, designTerminals, graphResult.graph, graphVisibility, osmBounds, physarum.runtime.state, profiled, scenario, spatial, spatialVisible, visibility]);
 
   useEffect(() => () => osmRequestRef.current?.abort(), []);
 
@@ -213,6 +221,17 @@ export function MapWorkspace() {
     physarum.reset();
     try { validateOSMArea(bounds); setOSMAreaError(null); }
     catch (error) { setOSMAreaError(error instanceof Error ? error.message : "The selected area is invalid."); }
+  }
+
+  /** Developer / QA fixture. Explicit, never automatic — see EMPTY_DATASET. */
+  function loadSyntheticSample() {
+    setImportError(null);
+    setOSMSummary(null);
+    setOSMBounds(null);
+    setOSMAreaError(null);
+    const sample = SYNTHETIC_SAMPLE();
+    resetForDataset(sample);
+    if (sample.bounds) command({ type: "fit-bounds", bounds: sample.bounds });
   }
 
   async function loadOSMNetwork() {
@@ -327,6 +346,7 @@ export function MapWorkspace() {
           <div className="runtime-actions">
             <button className="run-physarum" type="button" onClick={() => command({ type: "capture-bounds" })}>Select current view</button>
             <button className="run-physarum" type="button" disabled={!osmBounds || Boolean(osmAreaError) || osmLoading} onClick={loadOSMNetwork}>{osmLoading ? "Loading…" : "Load OSM network"}</button>
+            <button className="run-physarum" type="button" onClick={loadSyntheticSample}>Load synthetic demo</button>
           </div>
           {osmBounds && <div className="scenario-stats" aria-label="OSM area summary">
             <span>Bounds <b>{formatOSMBounds(osmBounds)}</b></span>
@@ -410,6 +430,7 @@ export function MapWorkspace() {
             <span>Model <b>{DESIGN_MODEL_VERSION}</b> · gamma <b>{DESIGN_V2.gamma}</b> · dt&#770; <b>{DESIGN_V2.timeStep}</b> · eps_r <b>{DESIGN_V2.backgroundRatio.toExponential(0)}</b></span>
             {design.runtime.error && <span className="status-invalid">{design.runtime.error}</span>}
           </div>}
+          <label className="layer-toggle"><span>Numerical mesh</span><input type="checkbox" checked={designMeshVisible} onChange={(event) => setDesignMeshVisible(event.target.checked)} /></label>
           <p className="scenario-hint">Colour and width show conductivity density, normalized for display only. Task 18 stops at the field — no threshold, no corridor extraction, no proposed roads.</p>
         </section>}
         <section className="dataset-summary" aria-label="Dataset summary">

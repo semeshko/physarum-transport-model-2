@@ -1,61 +1,129 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { createOverpassQuery, createUrbanContextQuery, fetchOSMTransport, OSMRequestError } from "./client";
 import { measureOSMArea, validateOSMArea } from "./area";
+import { createOverpassQuery, createUrbanContextQuery, fetchOSMTransport, fetchOSMUrbanContext, OSMRequestError } from "./client";
+import type { GISBounds } from "../gis/types";
 
-const bounds = [24.03, 49.84, 24.04, 49.85] as const;
+const bounds: GISBounds = [24.0241, 49.8398, 24.0391, 49.846];
+const oversized: GISBounds = [24, 49.8, 24.2, 49.95];
 
-describe("OSM request safeguards", () => {
+const ok = (payload: unknown) => ({ ok: true, status: 200, json: async () => payload }) as unknown as Response;
+const fail = (status: number, body: unknown) => ({ ok: false, status, json: async () => body }) as unknown as Response;
+
+describe("OSM query construction", () => {
   it("builds a bounded geometry query for supported highways", () => {
     const query = createOverpassQuery(bounds);
-    expect(query).toContain('[out:json][timeout:20]');
-    expect(query).toContain('["highway"~');
-    expect(query).toContain('["area"!="yes"](49.84,24.03,49.85,24.04)');
+    expect(query).toContain('way["highway"');
     expect(query).toContain("out body geom");
+    expect(query).toContain("49.8398,24.0241,49.846,24.0391");
   });
 
-  it("keeps focused urban context in a separate bounded query", () => { const query = createUrbanContextQuery(bounds); expect(query).toContain('way["building"]'); expect(query).toContain('way["natural"="water"]'); expect(query).toContain('way["leisure"="park"]'); expect(query).not.toContain('way["highway"'); });
+  it("keeps focused urban context in a separate bounded query", () => {
+    const query = createUrbanContextQuery(bounds);
+    expect(query).toContain('way["building"]');
+    expect(query).toContain('way["natural"="water"]');
+    expect(query).toContain('way["leisure"="park"]');
+    expect(query).not.toContain('way["highway"');
+  });
 
   it("measures and accepts a district-scale area", () => {
-    expect(measureOSMArea(bounds).areaSquareKilometers).toBeGreaterThan(0);
-    expect(validateOSMArea(bounds)).toEqual(measureOSMArea(bounds));
+    const measurement = measureOSMArea(bounds);
+    expect(measurement.areaSquareKilometers).toBeLessThan(2);
+    expect(() => validateOSMArea(bounds)).not.toThrow();
+  });
+});
+
+/**
+ * The browser never speaks to Overpass. `User-Agent` is a forbidden header
+ * name, so page JavaScript cannot identify the application and OSM community
+ * endpoints answer an unidentified browser with HTTP 406. Everything below
+ * asserts that the client's only correspondent is this app's own route.
+ */
+describe("browser OSM client", () => {
+  it("requests this application's route, not a public Overpass instance", async () => {
+    const fetchImplementation = vi.fn(async () => ok({ elements: [{ type: "way", id: 1 }] }));
+    await fetchOSMTransport(bounds, { fetchImplementation });
+    const [url] = fetchImplementation.mock.calls[0] as unknown as [string];
+    expect(url).toMatch(/^\/api\/osm\?/);
+    expect(url).toContain("kind=transport");
+    expect(url).toContain("bbox=24.024100,49.839800,24.039100,49.846000");
+    expect(url).not.toMatch(/overpass|openstreetmap\.de|mail\.ru/);
   });
 
-  it("rejects an oversized viewport before fetch", async () => {
-    const fetchImplementation = vi.fn<typeof fetch>();
-    await expect(fetchOSMTransport([24, 49.8, 24.2, 50], { fetchImplementation })).rejects.toThrow(/too large/);
+  it("asks for context separately from transport", async () => {
+    const fetchImplementation = vi.fn(async () => ok({ elements: [{ type: "way", id: 2 }] }));
+    await fetchOSMUrbanContext(bounds, { fetchImplementation });
+    expect((fetchImplementation.mock.calls[0] as unknown as [string])[0]).toContain("kind=context");
+  });
+
+  it("rejects an oversized viewport before spending a request", async () => {
+    const fetchImplementation = vi.fn(async () => ok({ elements: [] }));
+    await expect(fetchOSMTransport(oversized, { fetchImplementation })).rejects.toThrow(/too large/);
     expect(fetchImplementation).not.toHaveBeenCalled();
   });
 
-  it("posts the query and returns JSON", async () => {
-    const payload = { elements: [{ type: "way", id: 1 }] };
-    const fetchImplementation = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } }));
-    await expect(fetchOSMTransport(bounds, { fetchImplementation })).resolves.toEqual(payload);
-    expect(fetchImplementation).toHaveBeenCalledWith(expect.stringContaining("overpass"), expect.objectContaining({ method: "POST", signal: expect.any(AbortSignal) }));
+  it("surfaces the server's error classification unchanged", async () => {
+    for (const [status, code, message] of [[429, "throttled", "busy"], [504, "timeout", "could not finish"], [413, "oversized", "smaller area"]] as const) {
+      const fetchImplementation = vi.fn(async () => fail(status, { error: `The OSM service is ${message}.`, code }));
+      await expect(fetchOSMTransport(bounds, { fetchImplementation })).rejects.toMatchObject({ code });
+    }
   });
 
-  it("falls back deterministically when the primary public instance fails", async () => {
-    const payload = { elements: [{ type: "way", id: 1 }] };
-    const fetchImplementation = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response("timeout", { status: 504 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } }));
-    await expect(fetchOSMTransport(bounds, { fetchImplementation })).resolves.toEqual(payload);
-    expect(fetchImplementation).toHaveBeenCalledTimes(2);
+  it("reports an empty area rather than an empty dataset", async () => {
+    const fetchImplementation = vi.fn(async () => ok({ elements: [] }));
+    await expect(fetchOSMTransport(bounds, { fetchImplementation })).rejects.toMatchObject({ code: "empty" });
   });
 
-  it.each([[429, "throttled"], [504, "timeout"], [500, "remote"]] as const)("maps HTTP %s to %s", async (status, code) => {
-    const fetchImplementation = vi.fn<typeof fetch>().mockResolvedValue(new Response("error", { status }));
-    await expect(fetchOSMTransport(bounds, { fetchImplementation })).rejects.toMatchObject({ code });
-  });
-
-  it("reports empty and malformed responses", async () => {
-    const emptyFetch = vi.fn<typeof fetch>().mockResolvedValue(new Response('{"elements":[]}', { status: 200, headers: { "content-type": "application/json" } }));
-    await expect(fetchOSMTransport(bounds, { fetchImplementation: emptyFetch })).rejects.toMatchObject({ code: "empty" });
-    const malformedFetch = vi.fn<typeof fetch>().mockImplementation(async () => new Response("not json", { status: 200, headers: { "content-type": "text/html" } }));
-    await expect(fetchOSMTransport(bounds, { fetchImplementation: malformedFetch })).rejects.toMatchObject({ code: "remote" });
+  it("classifies a malformed payload as a remote fault", async () => {
+    const fetchImplementation = vi.fn(async () => ok({ nope: true }));
+    await expect(fetchOSMTransport(bounds, { fetchImplementation })).rejects.toMatchObject({ code: "remote" });
   });
 
   it("times out and aborts the underlying request", async () => {
-    const fetchImplementation = vi.fn<typeof fetch>().mockImplementation((_input, init) => new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")))));
-    await expect(fetchOSMTransport(bounds, { fetchImplementation, timeoutMilliseconds: 1 })).rejects.toEqual(expect.objectContaining<Partial<OSMRequestError>>({ code: "timeout" }));
+    const fetchImplementation = vi.fn((_url: string, init?: { signal?: AbortSignal }) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    })) as unknown as typeof fetch;
+    await expect(fetchOSMTransport(bounds, { fetchImplementation, timeoutMilliseconds: 10 })).rejects.toMatchObject({ code: "timeout" });
+  });
+
+  it("distinguishes a caller cancellation from a timeout", async () => {
+    const controller = new AbortController();
+    const fetchImplementation = vi.fn((_url: string, init?: { signal?: AbortSignal }) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    })) as unknown as typeof fetch;
+    const pending = fetchOSMTransport(bounds, { fetchImplementation, signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ code: "aborted" });
+  });
+
+  it("never substitutes fixture data when a live fetch fails", async () => {
+    const fetchImplementation = vi.fn(async () => fail(502, { error: "Could not reach the OSM service.", code: "network" }));
+    await expect(fetchOSMTransport(bounds, { fetchImplementation })).rejects.toBeInstanceOf(OSMRequestError);
+  });
+});
+
+/**
+ * The Node transport must never reach a client bundle. `node:https` in a
+ * `"use client"` graph is a build failure at best and a silent polyfill at
+ * worst, and it would take the identifying User-Agent somewhere it cannot work.
+ */
+describe("server-only boundary", () => {
+  const read = (path: string) => readFileSync(path, "utf8");
+
+  it("keeps the Node transport out of the browser client", () => {
+    const source = read("src/osm/client.ts");
+    expect(source).not.toMatch(/server-client/);
+    expect(source).not.toMatch(/node:https|from "https"/);
+  });
+
+  it("keeps provider mechanics out of the workspace component", () => {
+    const source = read("src/components/MapWorkspace.tsx");
+    expect(source).not.toMatch(/server-client|overpass|interpreter/i);
+    expect(source).toMatch(/from "@\/osm\/client"/);
+  });
+
+  it("confines the Node transport to the server route", () => {
+    expect(read("src/osm/server-client.ts")).toMatch(/node:https/);
+    expect(read("src/app/api/osm/route.ts")).toMatch(/runtime = "nodejs"/);
   });
 });

@@ -47,3 +47,5 @@ next-env.d.ts
 
 # local research scratchpad — never committed
 /scratch/
+/.desktop/
+*.physarum.json

@@ -36,6 +36,8 @@ import { addSpatialImpactsToRegistry } from "@/spatial-constraints/map-registry"
 import { DEFAULT_SPATIAL_POLICY, type SpatialConstraintPolicy } from "@/spatial-constraints/types";
 import { createSpatialQAReport, serializeSpatialQAReport } from "@/spatial-constraints/qa";
 import { MapCanvas, type CameraCommand, type MapFeatureSelection } from "./MapCanvas";
+import { INITIAL_CAMERA, type ProjectCamera, type ProjectDocument, type ProjectSnapshot } from "@/project/document";
+import { useProjectFiles } from "@/hooks/useProjectFiles";
 
 /**
  * Analyze starts empty. The synthetic fixture used to be the startup dataset,
@@ -62,6 +64,9 @@ const DESIGN_RADII = [150, 250, 400, 600] as const;
 const DESIGN_GIS_VISIBILITY: GISLayerVisibility = { roadsPaths: false, buildings: false, water: false, green: false };
 
 export function MapWorkspace() {
+  const [camera,setCamera]=useState<ProjectCamera>(INITIAL_CAMERA);
+  const [parameters,setParameters]=useState(DEFAULT_PHYSARUM_PARAMETERS);
+  const projectEpoch=useRef(0);
   const [dataset, setDataset] = useState<GISDataset>(EMPTY_DATASET);
   const [visibility, setVisibility] = useState<GISLayerVisibility>(DEFAULT_GIS_LAYER_VISIBILITY);
   const [graphVisibility, setGraphVisibility] = useState<GraphLayerVisibility>(DEFAULT_GRAPH_LAYER_VISIBILITY);
@@ -81,6 +86,7 @@ export function MapWorkspace() {
   const [osmLoading, setOSMLoading] = useState(false);
   const [osmSummary, setOSMSummary] = useState<OSMImportSummary | null>(null);
   const [allowIncompleteContext, setAllowIncompleteContext] = useState(false);
+  const [openedSnapshot,setOpenedSnapshot]=useState(false);
   const osmTransportRef = useRef<OSMAcquisition | null>(null);
   const [mode, setMode] = useState<WorkspaceMode>("analyze");
   const [designBounds, setDesignBounds] = useState<GISBounds | null>(null);
@@ -107,6 +113,21 @@ export function MapWorkspace() {
   const spatial = useMemo(() => costed ? applySpatialConstraints(costed, spatialConstraints, spatialPolicy) : null, [costed, spatialConstraints, spatialPolicy]);
   const prepared = useMemo(() => graphResult.graph && profiled && costed && spatial ? prepareNetwork(graphResult.graph, scenario, profiled, costed, spatial) : null, [costed, graphResult.graph, profiled, scenario, spatial]);
   const designMode = mode === "design";
+  const projectSnapshot:ProjectSnapshot={dataset,aoi:osmBounds,osmSummary,allowIncompleteContext,scenario,parameters,spatialPolicy,camera,projection,visibility,graphVisibility,costVisible,spatialVisible,result:physarum.runtime.status==="completed" && !physarum.runtime.state?.error ? physarum.runtime.state:null};
+  function openProject(doc:ProjectDocument|null):ProjectSnapshot {
+    const s:ProjectSnapshot=doc?.snapshot??{dataset:EMPTY_DATASET,aoi:null,osmSummary:null,allowIncompleteContext:false,scenario:createEmptyScenario(),parameters:{...DEFAULT_PHYSARUM_PARAMETERS},spatialPolicy:{...DEFAULT_SPATIAL_POLICY},camera:INITIAL_CAMERA,projection:"mercator",visibility:DEFAULT_GIS_LAYER_VISIBILITY,graphVisibility:DEFAULT_GRAPH_LAYER_VISIBILITY,costVisible:false,spatialVisible:true,result:null};
+    projectEpoch.current+=1;
+    setOpenedSnapshot(Boolean(doc));
+    osmRequestRef.current?.abort();osmRequestRef.current=null;osmTransportRef.current=null;
+    setOSMLoading(false);setImportError(null);setOSMAreaError(null);
+    setDataset(s.dataset);setOSMBounds(s.aoi);setOSMSummary(s.osmSummary);setAllowIncompleteContext(s.allowIncompleteContext);
+    setScenario(s.scenario);setParameters(s.parameters);setSpatialPolicy(s.spatialPolicy);setCamera(s.camera);setProjection(s.projection);
+    setVisibility(s.visibility);setGraphVisibility(s.graphVisibility);setCostVisible(s.costVisible);setSpatialVisible(s.spatialVisible);
+    setSelectedEdgeId("");setScenarioMode(null);physarum.restore(s.result);
+    commandId.current+=1;setCameraCommand({id:commandId.current,type:"restore",camera:s.camera});
+    return s;
+  }
+  const project=useProjectFiles(projectSnapshot,openProject,!designMode);
   const designArea = useMemo(() => {
     if (!designBounds) return null;
     try { return createDesignArea(designBounds); } catch { return null; }
@@ -259,6 +280,7 @@ export function MapWorkspace() {
       const result = await loadOSMArea(osmBounds, { signal: controller.signal, transport: contextOnly ? osmTransportRef.current ?? undefined : undefined });
       if (controller.signal.aborted || controller !== osmRequestRef.current) return;
       resetForDataset(result.dataset);
+      setOpenedSnapshot(false);
       osmTransportRef.current = result.transport;
       setOSMSummary(result.summary);
       if (!contextOnly && result.dataset.bounds) command({ type: "fit-bounds", bounds: result.dataset.bounds });
@@ -274,6 +296,7 @@ export function MapWorkspace() {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
+    const epoch=projectEpoch.current;
     osmRequestRef.current?.abort();
     osmRequestRef.current = null;
     osmTransportRef.current = null;
@@ -284,10 +307,12 @@ export function MapWorkspace() {
     setImportError(null);
     try {
       const parsed: unknown = JSON.parse(await file.text());
+      if(epoch!==projectEpoch.current) return;
       const imported = ingestGeoJSON(parsed, { name: file.name, source: { kind: "file", name: file.name } });
       resetForDataset(imported);
       if (imported.bounds) command({ type: "fit-bounds", bounds: imported.bounds });
     } catch (error) {
+      if(epoch!==projectEpoch.current) return;
       const message = error instanceof GISIngestionError ? error.message : error instanceof SyntaxError ? "The selected file is not valid JSON." : "The selected GeoJSON file could not be imported.";
       setImportError(message);
     }
@@ -328,8 +353,10 @@ export function MapWorkspace() {
 
   return (
     <section className="map-workspace" aria-label="Physarum map workspace">
-      {registry && <MapCanvas cameraCommand={cameraCommand} projection={projection} registry={registry} onFeatureSelect={selectMapFeature} onBoundsCaptured={captureBounds} onMapClick={designMode && designPlacement ? placeDesignTerminal : undefined} />}
+      {registry && <MapCanvas cameraCommand={cameraCommand} projection={projection} registry={registry} onCameraChanged={setCamera} onFeatureSelect={selectMapFeature} onBoundsCaptured={captureBounds} onMapClick={designMode && designPlacement ? placeDesignTerminal : undefined} />}
+      {project.busy && <div className="project-busy" role="status">Робота з файлом проєкту…</div>}
       <aside className={`map-panel${panelCollapsed ? " is-collapsed" : ""}`} aria-label="GIS controls">
+        {project.desktop && <section className="project-info"><label>Проєкт <input aria-label="Назва проєкту" value={project.name} onChange={e=>project.rename(e.target.value)} /></label><span>{project.dirty?"● Незбережені зміни":"Збережено"} · Файл: Ctrl+O / Ctrl+S</span>{designMode && <span>Design не входить до формату проєкту v1.</span>}{project.error && <div role="alert">{project.error}</div>}</section>}
         <header className="panel-heading">
           <div><h1>Physarum Transport Model 2.0</h1><p>GIS ingestion foundation · EPSG:4326</p></div>
           <label className="import-button">Import GeoJSON<input aria-label="Import GeoJSON" type="file" accept=".geojson,.json,application/geo+json,application/json" onChange={importFile} /></label>
@@ -344,7 +371,7 @@ export function MapWorkspace() {
         </div>
         <div className="scenario-actions" aria-label="Workspace mode">
           <button type="button" aria-pressed={mode === "analyze"} onClick={() => switchMode("analyze")}>Analyze</button>
-          <button type="button" aria-pressed={mode === "design"} onClick={() => switchMode("design")}>Design</button>
+          <button type="button" disabled={project.desktop} title={project.desktop?"DESKTOP-01 підтримує лише Analyze; Design доступний у web-версії.":undefined} aria-pressed={mode === "design"} onClick={() => switchMode("design")}>Design</button>
         </div>
         {!designMode && <section className="scenario-section osm-section" aria-label="OpenStreetMap import">
           <div className="scenario-heading"><strong>OpenStreetMap network</strong><span>{osmLoading ? "Loading" : osmBounds ? "Area selected" : "No area"}</span></div>
@@ -366,7 +393,7 @@ export function MapWorkspace() {
             <span>Urban context: <b>{osmSummary.urbanStatus}</b>{osmSummary.urbanStatus !== "unavailable" && <> · {osmSummary.urbanFeatureCount} features · {osmSummary.urbanPolygonCount} polygons</>}</span>
             {osmSummary.urbanStatus === "empty" && <span>No supported way geometries returned by a successful query. This does not establish absence of relation-only objects.</span>}
             {osmSummary.urbanContextWarning && <span className="dataset-warning">{osmSummary.urbanContextWarning} Missing objects are unknown, not absent.</span>}
-            {contextIncomplete && <><button type="button" className="run-physarum" disabled={osmLoading || !selectedAreaLoaded} onClick={() => loadOSMNetwork(true)}>Retry urban context</button><label><input type="checkbox" checked={allowIncompleteContext} onChange={(event) => { setAllowIncompleteContext(event.target.checked); physarum.reset(); }} /> Analyze with incomplete urban context</label></>}
+            {contextIncomplete && <><button type="button" className="run-physarum" disabled={osmLoading || !selectedAreaLoaded || openedSnapshot} onClick={() => loadOSMNetwork(true)}>Retry urban context</button>{openedSnapshot && <span>Відкрито збережений snapshot. Load OSM network явно завантажить нові дані; поточні не оновлюються автоматично.</span>}<label><input type="checkbox" checked={allowIncompleteContext} onChange={(event) => { setAllowIncompleteContext(event.target.checked); physarum.reset(); }} /> Analyze with incomplete urban context</label></>}
             <span>Transport snapshot <b>{osmSummary.transportProvenance.snapshotTimestamp ?? "Unknown"}</b></span>
             <span>Transport retrieved <b>{osmSummary.transportProvenance.fetchedAt ?? "Unknown"}</b> · {osmSummary.transportProvenance.cached ? "server cache" : "provider response"}</span>
             <span>Transport provider {osmSummary.transportProvenance.endpoint ?? "Unknown"}</span>
@@ -544,13 +571,13 @@ export function MapWorkspace() {
           <section className="scenario-section physarum-section" aria-label="Physarum controls">
             <div className="scenario-heading"><strong>Physarum runtime</strong><span className={physarum.runtime.status === "completed" ? "status-valid" : physarum.runtime.status === "error" ? "status-invalid" : ""}>{physarum.runtime.status}</span></div>
             <div className="runtime-actions">
-              {(physarum.runtime.status === "idle" || physarum.runtime.status === "completed" || physarum.runtime.status === "cancelled" || physarum.runtime.status === "error") && <button className="run-physarum" type="button" disabled={!prepared.network || !analyzeReady} onClick={() => prepared.network && analyzeReady && physarum.start(prepared.network)}>Run</button>}
+              {(physarum.runtime.status === "idle" || physarum.runtime.status === "completed" || physarum.runtime.status === "cancelled" || physarum.runtime.status === "error") && <button className="run-physarum" type="button" disabled={!prepared.network || !analyzeReady} onClick={() => prepared.network && analyzeReady && physarum.start(prepared.network,parameters)}>Run</button>}
               {physarum.runtime.status === "running" && <button className="run-physarum" type="button" onClick={physarum.pause}>Pause</button>}
               {physarum.runtime.status === "paused" && <button className="run-physarum" type="button" onClick={physarum.resume}>Resume</button>}
               {(physarum.runtime.status === "running" || physarum.runtime.status === "paused" || physarum.runtime.status === "completed" || physarum.runtime.status === "error") && <button className="run-physarum reset-runtime" type="button" onClick={physarum.reset}>Reset runtime</button>}
             </div>
             {physarum.runtime.state && <div className="scenario-stats" aria-label="Physarum diagnostics">
-              <span>Iteration <b>{physarum.runtime.state.iteration} / {DEFAULT_PHYSARUM_PARAMETERS.maxIterations}</b></span>
+              <span>Iteration <b>{physarum.runtime.state.iteration} / {parameters.maxIterations}</b></span>
               <span>Scientific termination <b>{physarum.runtime.state.terminationReason ?? "—"}</b></span>
               <span>Max ΔD <b>{physarum.runtime.state.diagnostics.maxDeltaD.toExponential(2)}</b></span>
               <span>Kirchhoff residual <b>{physarum.runtime.state.diagnostics.maximumKirchhoffResidual.toExponential(2)}</b></span>

@@ -2,6 +2,10 @@
   "name": "physarum-transport-model-2",
   "version": "0.1.0",
   "private": true,
+  "main": ".desktop/shell/main.cjs",
+  "description": "Physarum Transport Model 2.0 — Windows Analyze projects",
+  "author": "Ivan Semeshko",
+  "config": { "forge": "./forge.config.cjs" },
   "scripts": {
     "predev": "node scripts/copy-maplibre-worker.mjs",
     "dev": "next dev",
@@ -10,6 +14,9 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "desktop:prepare": "npm run build && node scripts/prepare-desktop.mjs",
+    "desktop:dev": "npm run desktop:prepare && electron .",
+    "desktop:package": "npm run desktop:prepare && electron-forge make --platform=win32 --arch=x64",
     "benchmark:solver": "vite-node scripts/benchmark-solver.ts",
     "benchmark:physarum-sensitivity": "vite-node scripts/benchmark-physarum-sensitivity.ts",
     "benchmark:physarum-regimes": "vite-node scripts/benchmark-physarum-regimes.ts"
@@ -18,13 +25,18 @@
     "maplibre-gl": "^6.9.0",
     "next": "16.3.5",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "zod": "4.6.5"
   },
   "devDependencies": {
+    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/maker-squirrel": "7.11.2",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "electron": "44.4.5",
+    "esbuild": "0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
     "tailwindcss": "^4",

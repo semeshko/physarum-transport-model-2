@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { PreparedNetwork } from "../scenario/types";
-import type { PhysarumParameters } from "../physarum/types";
+import type { PhysarumParameters, PhysarumState } from "../physarum/types";
 import { INITIAL_PHYSARUM_RUNTIME_STATE, physarumRuntimeReducer, type PhysarumWorkerRequest, type PhysarumWorkerResponse } from "../physarum/worker-protocol";
 
 export function usePhysarumRuntime() {
@@ -39,6 +39,7 @@ export function usePhysarumRuntime() {
     activeRunId.current = null;
   }, [send]);
   const reset = useCallback(() => { cancel(); dispatch({ type: "RESET" }); }, [cancel]);
+  const restore = useCallback((state:PhysarumState|null) => {cancel();dispatch({type:"RESTORE",state});},[cancel]);
 
-  return { runtime, start, pause, resume, cancel, reset } as const;
+  return { runtime, start, pause, resume, cancel, reset, restore } as const;
 }

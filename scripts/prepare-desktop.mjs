@@ -1,0 +1,23 @@
+import {build} from 'esbuild';
+import {cp,mkdir,readFile,writeFile,access,readdir} from 'node:fs/promises';
+import {resolve,join,basename} from 'node:path';
+import {execFileSync} from 'node:child_process';
+const root=process.cwd();
+const shell=resolve(root,'.desktop/shell'),runtime=resolve(root,'.desktop/runtime');
+await mkdir(shell,{recursive:true});
+await build({entryPoints:['desktop/main.ts','desktop/preload.ts'],outdir:shell,outExtension:{'.js':'.cjs'},bundle:true,platform:'node',format:'cjs',external:['electron'],target:'node22'});
+await cp(resolve('desktop/splash.html'),join(shell,'splash.html'));
+// Only this verified generated staging directory is replaced. Never source/user data.
+const {rm}=await import('node:fs/promises');
+if(runtime!==join(root,'.desktop','runtime'))throw new Error('Unexpected staging path');
+await rm(runtime,{recursive:true,force:true});
+await cp(resolve('.next/standalone'),runtime,{recursive:true,filter:path=>!basename(path).startsWith('.env') && basename(path)!=='cache'});
+await cp(resolve('.next/static'),join(runtime,'.next/static'),{recursive:true});
+await cp(resolve('public'),join(runtime,'public'),{recursive:true});
+for(const asset of ['server.js','public/maplibre-gl-worker.mjs','public/maplibre-gl-shared.mjs','.next/BUILD_ID'])await access(join(runtime,asset));
+const find=async dir=>{const entries=await readdir(dir,{withFileTypes:true});return (await Promise.all(entries.map(e=>e.isDirectory()?find(join(dir,e.name)):[join(dir,e.name)]))).flat();};
+const assets=await find(join(runtime,'.next/static'));
+if(!assets.some(p=>p.includes('physarum')&&p.endsWith('.js')))throw new Error('Analyze Worker asset missing');
+const metadata={version:JSON.parse(await readFile('package.json','utf8')).version,base:'2a099f142f2760d2b0e9b08fa6923a4c67d8419b',commit:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),builtAt:new Date().toISOString()};
+await writeFile(join(shell,'build-info.json'),JSON.stringify(metadata,null,2));
+console.log('Desktop shell and standalone runtime prepared:',metadata);

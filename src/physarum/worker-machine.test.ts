@@ -47,4 +47,11 @@ describe("Physarum client runtime reducer", () => {
     const running = physarumRuntimeReducer(INITIAL_PHYSARUM_RUNTIME_STATE, { type: "LOCAL_START", runId: "a" });
     expect(physarumRuntimeReducer(running, { type: "RESET" })).toEqual(INITIAL_PHYSARUM_RUNTIME_STATE);
   });
+  it("restoring another project detaches the previous worker run",()=>{
+    const running=physarumRuntimeReducer(INITIAL_PHYSARUM_RUNTIME_STATE,{type:"LOCAL_START",runId:"old-project"});
+    const restored=physarumRuntimeReducer(running,{type:"RESTORE",state:{...progress("saved",10).state,converged:true,terminationReason:"converged"}});
+    expect(restored.runId).toBeNull();expect(restored.status).toBe("completed");
+    expect(physarumRuntimeReducer(restored,{type:"WORKER_MESSAGE",message:{...progress("old-project",99),type:"COMPLETED"}})).toBe(restored);
+    expect(physarumRuntimeReducer(restored,{type:"RESTORE",state:null})).toEqual(INITIAL_PHYSARUM_RUNTIME_STATE);
+  });
 });

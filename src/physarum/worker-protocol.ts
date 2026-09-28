@@ -29,6 +29,7 @@ export type PhysarumRuntimeState = {
 };
 
 export type PhysarumRuntimeAction =
+  | { readonly type: "RESTORE"; readonly state: PhysarumState | null }
   | { readonly type: "LOCAL_START"; readonly runId: string }
   | { readonly type: "RESET" }
   | { readonly type: "WORKER_MESSAGE"; readonly message: PhysarumWorkerResponse };
@@ -36,6 +37,7 @@ export type PhysarumRuntimeAction =
 export const INITIAL_PHYSARUM_RUNTIME_STATE: PhysarumRuntimeState = { status: "idle", runId: null, state: null, error: null };
 
 export function physarumRuntimeReducer(state: PhysarumRuntimeState, action: PhysarumRuntimeAction): PhysarumRuntimeState {
+  if (action.type === "RESTORE") return action.state ? {status:"completed",runId:null,state:action.state,error:null} : INITIAL_PHYSARUM_RUNTIME_STATE;
   if (action.type === "RESET") return INITIAL_PHYSARUM_RUNTIME_STATE;
   if (action.type === "LOCAL_START") return { status: "running", runId: action.runId, state: null, error: null };
   const message = action.message;

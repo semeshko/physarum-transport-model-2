@@ -8,7 +8,9 @@ Preserved local 18C/18C.1 checkpoint: `1d2d41343095ac943d0ef264d78bf7d704a3b2a7`
 
 Review branch: `codex/claude-handoff-audit`
 
-This audit was performed locally. No browser or browser-control tool was used.
+The initial audit and review checkpoint were performed locally without browser
+control. After the owner authorized browser QA, the Analyze follow-up in
+section 10 was performed on 2026-09-28. Design visual acceptance remains open.
 
 ## 1. Recovered state
 
@@ -170,14 +172,15 @@ anchor preservation, a live small-AOI server request, and Pedestrian/Motor
 Analyze convergence on that small graph.
 
 Not independently reproduced in this audit: the original exploratory sweeps
-behind Gates D–H, every numerical value quoted in their reports, browser visual
-acceptance, rotation studies beyond their committed tests, the historical
+behind Gates D–H, every numerical value quoted in their reports, Design browser
+visual acceptance, rotation studies beyond their committed tests, the historical
 handmade Lviv barrier screenshots, or equivalence to the diploma experiment.
 
 ### Visual MVP evidence
 
-Build and Worker logic are verified locally, but this audit did not repeat
-browser visual acceptance because browser use was explicitly excluded.
+Build and Worker logic were verified locally. Browser use was excluded during
+the initial audit; the later authorized Analyze-only verification is recorded
+in section 10 and does not accept the Design Visual MVP.
 
 ## 5. Product-goal gap
 
@@ -233,8 +236,9 @@ Final verification after fixes:
 
 ## 8. Manual acceptance steps
 
-These steps are for the owner to perform later; they were not executed by this
-browser-free audit.
+These steps were prepared for the owner during the browser-free audit. Section
+10 records the later browser run on a different small AOI; the exact reference
+bbox below remains a CLI reference rather than an executed browser scenario.
 
 Verified reference AOI in central Lviv:
 
@@ -301,3 +305,85 @@ acceptance.
 Continue with a small real Analyze slice and explicit data/graph diagnostics.
 Do not start Prediction, new Design mathematics, automatic parameter fitting or
 new multimodal semantics in this review.
+
+## 10. Authorized Analyze browser follow-up — 2026-09-28
+
+Starting HEAD: `490fc49550906966b1465e837fb173ea9cbbda66` on the review branch.
+The local server was restarted with `npm run dev` at `http://localhost:3000`.
+Chrome UI actions exercised the actual map, local API route and Analyze Worker.
+No synthetic dataset, GeoJSON upload or scratch converter was used.
+
+### Confirmed browser blocker and regression
+
+The first **Load OSM network** request ended at 30 seconds with a visible timeout
+and **No data loaded**. `src/osm/client.ts` imposed a 30-second total deadline,
+while `src/osm/server-client.ts` permits three sequential provider attempts with
+25-second timeouts. This can cancel a valid mirror fallback prematurely.
+
+The regression `lets the browser receive a third-mirror response after two
+provider timeouts` in `src/osm/server-client.test.ts` joins the real client and
+server orchestration through injected transports and fake timers. Two attempts
+time out at 25 seconds each; the third responds after 10 seconds. It failed
+before the fix and passes with the client's 80-second deadline. Existing caller
+cancellation and timeout tests continue to pass. This is an allowance for the
+normal retry sequence, not a guarantee of provider availability or a hard
+server-wide deadline (the Node transport uses a socket inactivity timeout).
+
+After the fix, repeating the identical UI request loaded transport successfully
+in 34.4 seconds, beyond the old deadline. Urban context failed separately after
+37.7 seconds with HTTP 502; the UI explicitly displayed that warning and loaded
+only transport. The visible combined fetch time was 37730 ms.
+
+### Actual data and terminals
+
+- Browser AOI near Lviv Citadel: west/south/east/north
+  `24.018373,49.828850,24.028995,49.835654` (approximately 0.57 km²).
+- Acquired 2026-09-28, approximately 07:00 UTC. A read-only inspection of the
+  same local route's cached payload returned OSM base timestamp
+  **2026-06-01T08:52:28Z**. A successful live request therefore did **not** mean
+  current-day OSM data. Data freshness is not accepted by this test.
+- 476 ways; missing anchors 0; graph 1308 nodes / 1490 edges; anchored 1212;
+  boundary/synthetic nodes 96; geometric tests 0. Diagnostics also showed one
+  nearby unconnected endpoint and one rejected invalid edge; these individual
+  data cases were not investigated by this acceptance run.
+- Pedestrian usable edges 1454; Motor usable edges 256. Exact counts are snapshot
+  observations, not stable acceptance requirements.
+- First Source: Pavla Hrabovskoho Street, `[24.0220685,49.8327964]`, OSM node
+  `422123850`, graph node `node-a-1of05jt16j2hyv`.
+- Sink: intersection with Mykhaila Kotsiubynskoho Street,
+  `[24.0252839,49.8319193]`, OSM node `267110958`, graph node
+  `node-a-1u5bmkl3y7lal`.
+- Changed Source: Karla Zvirynskoho Street, `[24.0226660,49.8335053]`, OSM node
+  `1702701171`, graph node `node-a-k0xbfbsqov0v`.
+
+Coordinates and street names were matched to the cached standard-route OSM
+node identities after choosing visible map nodes. They were not inferred from
+the old scratch converter.
+
+### Observed UI results
+
+| Action | Observed result |
+| --- | --- |
+| Fresh page | Map rendered; **No data loaded**, zero graph nodes, **Run** disabled. |
+| Select oversized view | Loading disabled with the maximum-area explanation. |
+| Select small view, **Load OSM network** | Real streets and graph rendered; missing anchors 0; context failure explicitly shown. |
+| **Select source**, map click, **Select sink**, map click | Valid connected Pedestrian scenario; **Run** enabled. |
+| Pedestrian **Run** | Completed, converged, 76 iterations; Kirchhoff residual `6.48e-11`; bright path visible along the streets. |
+| **Motor** | Both terminals cleared; runtime idle; old path removed; fewer usable nodes/edges visible. |
+| Re-select the same pair using node dropdowns, **Run** | Completed, converged, 66 iterations; residual `9.73e-11`. |
+| **Select source**, click another Motor node | New source selected; old diagnostics cleared; runtime idle, Run enabled. |
+| **Run** with changed Source | Completed, converged, 68 iterations; residual `5.27e-11`. |
+| **Reset runtime** | Diagnostics cleared; both selected terminals retained. |
+| **Run** again | Same 68 iterations and displayed residual `5.27e-11`. |
+| **Clear scenario** | Both terminals empty; Run disabled; all 476 imported features retained. |
+
+No warning/error console entries were captured during these checks. This does
+not certify all possible UI paths. Browser QA is now **performed for the above
+Analyze workflow**, with partial data availability. Urban building/water/green
+barriers, fresh-data guarantees, mobile layout, Design, historical Gates D–H,
+and general one-way routing remain outside this acceptance result.
+
+Validation after the timeout change: 467/467 tests in 35 files; targeted ESLint
+passed; `tsc --noEmit` passed; browser retry and the Analyze runs above passed.
+The earlier production build result belongs to the checkpoint; it was not rerun
+for this timeout-only change. No merge into `main` was performed.

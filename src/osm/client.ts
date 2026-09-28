@@ -13,7 +13,9 @@ export { OSMRequestError, createOverpassQuery, createUrbanContextQuery } from ".
  * unidentified browser and is answered with HTTP 406. The identifying request
  * has to be made by the server; see `src/osm/server-client.ts`.
  */
-export const OSM_REQUEST_TIMEOUT_MILLISECONDS = 30_000;
+// Allow the server's three sequential 25-second provider attempts plus response
+// overhead. A 30-second deadline cancelled the request during mirror fallback.
+export const OSM_REQUEST_TIMEOUT_MILLISECONDS = 80_000;
 
 type RequestOptions = { readonly signal?: AbortSignal; readonly fetchImplementation?: typeof fetch; readonly timeoutMilliseconds?: number };
 

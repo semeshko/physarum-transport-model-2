@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import type { GISBounds } from "../gis/types";
+import { fetchOSMTransport } from "./client";
 import { OSMRequestError } from "./query";
 import { clearOverpassCache, OVERPASS_ENDPOINTS, overpassUserAgent, requestOverpass, type OverpassTransport } from "./server-client";
 
@@ -15,6 +16,39 @@ beforeEach(() => clearOverpassCache());
  * mirrors should not be hit on every `npm test`.
  */
 describe("server-side Overpass client", () => {
+  it("lets the browser receive a third-mirror response after two provider timeouts", async () => {
+    vi.useFakeTimers();
+    try {
+      let attempts = 0;
+      const transport: OverpassTransport = (_endpoint, _body, timeout, signal) => new Promise((resolve, reject) => {
+        const attempt = ++attempts;
+        const abort = () => {
+          clearTimeout(timer);
+          reject(new OSMRequestError("aborted", "Cancelled"));
+        };
+        const timer = setTimeout(() => {
+          signal?.removeEventListener("abort", abort);
+          if (attempt < 3) reject(new OSMRequestError("timeout", "Provider timed out"));
+          else resolve(respond(payload()));
+        }, attempt < 3 ? timeout : 10_000);
+        signal?.addEventListener("abort", abort, { once: true });
+      });
+      const fetchImplementation = (async (_url, init) => {
+        const result = await requestOverpass("transport", bounds, { transport, signal: init?.signal ?? undefined });
+        return { ok: true, json: async () => result.payload } as Response;
+      }) as typeof fetch;
+      const outcome = fetchOSMTransport(bounds, { fetchImplementation }).then(
+        (value) => ({ value, error: null }),
+        (error: unknown) => ({ value: null, error }),
+      );
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await outcome).toEqual({ value: JSON.parse(payload()), error: null });
+      expect(attempts).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("identifies the application rather than impersonating a browser", () => {
     const agent = overpassUserAgent("https://example.test/contact");
     expect(agent).toMatch(/^physarum-transport-model-2\/\d/);

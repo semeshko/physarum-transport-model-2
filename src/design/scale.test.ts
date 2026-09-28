@@ -217,6 +217,17 @@ describe("scale-aware convergence", () => {
    */
   it("rejects a converged verdict that arrives before any dimensionless time has passed", () => {
     const parameters = resolveDesignV2(base.network);
+    const legacyFalsePositive = runDesignField(base.network, {
+      ...parameters,
+      minimumSimulationTime: 0,
+      timeStep: parameters.timeStep * 1e-9,
+      maxIterations: 20,
+    });
+    expect(legacyFalsePositive.diagnostics).toMatchObject({
+      converged: true,
+      terminationReason: "converged",
+      iteration: 1,
+    });
     const crawling = runDesignField(base.network, { ...parameters, timeStep: parameters.timeStep * 1e-9, maxIterations: 20 });
     const elapsed = crawling.diagnostics.iteration * DESIGN_V2.timeStep * 1e-9;
     expect(elapsed).toBeLessThan(DESIGN_V2.minimumElapsed);

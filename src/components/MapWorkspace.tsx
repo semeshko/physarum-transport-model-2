@@ -10,18 +10,18 @@ import { DEFAULT_DESIGN_BARRIER_POLICY, designBarriersFromDataset, type DesignBa
 import { buildDesignMesh, createDesignArea } from "@/design/mesh";
 import { assembleDesignNetwork, type DesignTerminal } from "@/design/network";
 import { GISIngestionError, ingestGeoJSON } from "@/gis/ingest";
-import { clipLineDatasetToBounds } from "@/gis/clip-lines";
 import { DEFAULT_GIS_LAYER_VISIBILITY, type GISLayerGroup, type GISLayerVisibility } from "@/gis/map-registry";
 import type { GISBounds, GISDataset, GISPosition } from "@/gis/types";
 import { useDesignRuntime } from "@/hooks/useDesignRuntime";
 import { usePhysarumRuntime } from "@/hooks/usePhysarumRuntime";
 import { addPhysarumResultToRegistry } from "@/physarum/map-registry";
 import { DEFAULT_PHYSARUM_PARAMETERS } from "@/physarum/parameters";
-import { overpassResponseToGeoJSON, overpassUrbanContextToGeoJSON } from "@/osm/adapter";
+import { overpassUrbanContextToGeoJSON } from "@/osm/adapter";
 import { formatOSMBounds, measureOSMArea, validateOSMArea } from "@/osm/area";
-import { fetchOSMTransport, fetchOSMUrbanContext, OSMRequestError } from "@/osm/client";
+import { fetchOSMUrbanContext, OSMRequestError } from "@/osm/client";
+import { loadOSMArea, snapshotWarning } from "@/osm/acquisition";
 import { addOSMAreaToRegistry } from "@/osm/map-registry";
-import type { OSMImportSummary } from "@/osm/types";
+import type { OSMAcquisition, OSMImportSummary } from "@/osm/types";
 import { addScenarioToRegistry } from "@/scenario/map-registry";
 import { prepareNetwork } from "@/scenario/prepare";
 import { createEmptyScenario, setEdgePenalty, setTerminal, setTransportProfile, toggleBlockedEdge } from "@/scenario/scenario";
@@ -80,6 +80,8 @@ export function MapWorkspace() {
   const [osmAreaError, setOSMAreaError] = useState<string | null>(null);
   const [osmLoading, setOSMLoading] = useState(false);
   const [osmSummary, setOSMSummary] = useState<OSMImportSummary | null>(null);
+  const [allowIncompleteContext, setAllowIncompleteContext] = useState(false);
+  const osmTransportRef = useRef<OSMAcquisition | null>(null);
   const [mode, setMode] = useState<WorkspaceMode>("analyze");
   const [designBounds, setDesignBounds] = useState<GISBounds | null>(null);
   const [designSpacing, setDesignSpacing] = useState<number>(120);
@@ -142,6 +144,7 @@ export function MapWorkspace() {
   }
 
   function resetForDataset(imported: GISDataset) {
+    setAllowIncompleteContext(false);
     setDataset(imported);
     setVisibility(DEFAULT_GIS_LAYER_VISIBILITY);
     setGraphVisibility(DEFAULT_GRAPH_LAYER_VISIBILITY);
@@ -159,6 +162,9 @@ export function MapWorkspace() {
 
   function switchMode(next: WorkspaceMode) {
     if (next === mode) return;
+    osmRequestRef.current?.abort();
+    osmRequestRef.current = null;
+    setOSMLoading(false);
     setMode(next);
     setScenarioMode(null);
     setDesignPlacement(null);
@@ -217,7 +223,8 @@ export function MapWorkspace() {
     osmRequestRef.current = null;
     setOSMLoading(false);
     setOSMBounds(bounds);
-    setOSMSummary(null);
+    osmTransportRef.current = null;
+    setImportError(null);
     physarum.reset();
     try { validateOSMArea(bounds); setOSMAreaError(null); }
     catch (error) { setOSMAreaError(error instanceof Error ? error.message : "The selected area is invalid."); }
@@ -225,6 +232,10 @@ export function MapWorkspace() {
 
   /** Developer / QA fixture. Explicit, never automatic — see EMPTY_DATASET. */
   function loadSyntheticSample() {
+    osmRequestRef.current?.abort();
+    osmRequestRef.current = null;
+    osmTransportRef.current = null;
+    setOSMLoading(false);
     setImportError(null);
     setOSMSummary(null);
     setOSMBounds(null);
@@ -234,7 +245,7 @@ export function MapWorkspace() {
     if (sample.bounds) command({ type: "fit-bounds", bounds: sample.bounds });
   }
 
-  async function loadOSMNetwork() {
+  async function loadOSMNetwork(contextOnly = false) {
     if (!osmBounds) return;
     physarum.reset();
     setImportError(null);
@@ -243,23 +254,14 @@ export function MapWorkspace() {
     const controller = new AbortController();
     osmRequestRef.current = controller;
     setOSMLoading(true);
-    const fetchStarted = performance.now();
     try {
       validateOSMArea(osmBounds);
-      const [payload, contextResult] = await Promise.all([fetchOSMTransport(osmBounds, { signal: controller.signal }), fetchOSMUrbanContext(osmBounds, { signal: controller.signal }).then((value) => ({ value, error: null as string | null })).catch((error: unknown) => ({ value: null, error: error instanceof Error ? error.message : "Urban context unavailable." }))]);
-      const fetchMilliseconds = performance.now() - fetchStarted;
-      const adapterStarted = performance.now();
-      const converted = overpassResponseToGeoJSON(payload);
-      const urban = contextResult.value ? overpassUrbanContextToGeoJSON(contextResult.value) : null;
-      if (converted.wayCount === 0) throw new OSMRequestError("empty", "No usable OSM transport ways were returned for this area.");
-      const adapterMilliseconds = performance.now() - adapterStarted;
-      const boundsKey = formatOSMBounds(osmBounds);
-      const combined = { type: "FeatureCollection", features: [...converted.featureCollection.features, ...(urban?.featureCollection.features ?? [])] };
-      const ingested = ingestGeoJSON(combined, { name: `OSM transport + urban context · ${boundsKey}`, source: { kind: "osm", name: `${boundsKey}:${converted.timestamp ?? "current"}` } });
-      const imported = clipLineDatasetToBounds(ingested, osmBounds);
-      resetForDataset({ ...imported, warnings: [...imported.warnings, ...converted.warnings, ...(urban?.warnings ?? []), ...(contextResult.error ? [`Urban context: ${contextResult.error}`] : []), "OSM access and one-way tags are preserved but not enforced; the graph is currently undirected."] });
-      setOSMSummary({ bounds: osmBounds, wayCount: converted.wayCount, skippedElementCount: converted.skippedElementCount, missingTopologyWayCount: converted.missingTopologyWayCount, urbanFeatureCount: urban?.wayCount ?? 0, urbanPolygonCount: urban?.polygonCount ?? 0, urbanContextWarning: contextResult.error, fetchMilliseconds, adapterMilliseconds, warnings: converted.warnings });
-      if (imported.bounds) command({ type: "fit-bounds", bounds: imported.bounds });
+      const result = await loadOSMArea(osmBounds, { signal: controller.signal, transport: contextOnly ? osmTransportRef.current ?? undefined : undefined });
+      if (controller.signal.aborted || controller !== osmRequestRef.current) return;
+      resetForDataset(result.dataset);
+      osmTransportRef.current = result.transport;
+      setOSMSummary(result.summary);
+      if (!contextOnly && result.dataset.bounds) command({ type: "fit-bounds", bounds: result.dataset.bounds });
     } catch (error) {
       if (controller !== osmRequestRef.current || error instanceof OSMRequestError && error.code === "aborted") return;
       setImportError(error instanceof Error ? error.message : "The OSM network could not be loaded.");
@@ -274,6 +276,7 @@ export function MapWorkspace() {
     if (!file) return;
     osmRequestRef.current?.abort();
     osmRequestRef.current = null;
+    osmTransportRef.current = null;
     setOSMLoading(false);
     setOSMSummary(null);
     setOSMBounds(null);
@@ -311,6 +314,9 @@ export function MapWorkspace() {
   function updateSpatialPolicy(key: "buildings" | "water" | "green", enabled: boolean) { setSpatialPolicy((current) => ({ ...current, [key]: enabled })); physarum.reset(); }
 
   const source = scenario.terminals.find((terminal) => terminal.role === "source");
+  const contextIncomplete = osmSummary?.urbanStatus === "unavailable" || osmSummary?.urbanStatus === "partial";
+  const selectedAreaLoaded = !osmBounds || Boolean(osmSummary && formatOSMBounds(osmSummary.bounds) === formatOSMBounds(osmBounds));
+  const analyzeReady = !osmLoading && selectedAreaLoaded && (!contextIncomplete || allowIncompleteContext);
   const sink = scenario.terminals.find((terminal) => terminal.role === "sink");
   const connectivity = prepared?.validation.sourceSinkConnectedAfterConstraints;
   const selectedCost = costed?.edges.find((item) => item.edge.id === selectedEdgeId);
@@ -345,7 +351,7 @@ export function MapWorkspace() {
           <p>Zoom to a small district, capture the visible rectangle, then load roads and paths.</p>
           <div className="runtime-actions">
             <button className="run-physarum" type="button" onClick={() => command({ type: "capture-bounds" })}>Select current view</button>
-            <button className="run-physarum" type="button" disabled={!osmBounds || Boolean(osmAreaError) || osmLoading} onClick={loadOSMNetwork}>{osmLoading ? "Loading…" : "Load OSM network"}</button>
+            <button className="run-physarum" type="button" disabled={!osmBounds || Boolean(osmAreaError) || osmLoading} onClick={() => loadOSMNetwork()}>{osmLoading ? "Loading…" : "Load OSM network"}</button>
             <button className="run-physarum" type="button" onClick={loadSyntheticSample}>Load synthetic demo</button>
           </div>
           {osmBounds && <div className="scenario-stats" aria-label="OSM area summary">
@@ -353,10 +359,19 @@ export function MapWorkspace() {
             <span>Approximate area <b>{measureOSMArea(osmBounds).areaSquareKilometers.toFixed(2)} km²</b></span>
           </div>}
           {osmAreaError && <div className="import-error" role="alert">{osmAreaError}</div>}
+          {!selectedAreaLoaded && dataset.featureCount > 0 && <div className="dataset-warning" role="status">The displayed dataset belongs to the previous area. Load the selected area before running Analyze.</div>}
           {osmSummary && <div className="scenario-stats" aria-label="OSM import summary">
+            <span>Loaded dataset bounds <b>{formatOSMBounds(osmSummary.bounds)}</b></span>
             <span>OSM ways <b>{osmSummary.wayCount}</b> · Skipped <b>{osmSummary.skippedElementCount}</b></span>
-            <span>Urban context <b>{osmSummary.urbanFeatureCount}</b> features · <b>{osmSummary.urbanPolygonCount}</b> polygons</span>
-            {osmSummary.urbanContextWarning && <span className="dataset-warning">Urban context unavailable: {osmSummary.urbanContextWarning}</span>}
+            <span>Urban context: <b>{osmSummary.urbanStatus}</b>{osmSummary.urbanStatus !== "unavailable" && <> · {osmSummary.urbanFeatureCount} features · {osmSummary.urbanPolygonCount} polygons</>}</span>
+            {osmSummary.urbanStatus === "empty" && <span>No supported way geometries returned by a successful query. This does not establish absence of relation-only objects.</span>}
+            {osmSummary.urbanContextWarning && <span className="dataset-warning">{osmSummary.urbanContextWarning} Missing objects are unknown, not absent.</span>}
+            {contextIncomplete && <><button type="button" className="run-physarum" disabled={osmLoading || !selectedAreaLoaded} onClick={() => loadOSMNetwork(true)}>Retry urban context</button><label><input type="checkbox" checked={allowIncompleteContext} onChange={(event) => { setAllowIncompleteContext(event.target.checked); physarum.reset(); }} /> Analyze with incomplete urban context</label></>}
+            <span>Transport snapshot <b>{osmSummary.transportProvenance.snapshotTimestamp ?? "Unknown"}</b></span>
+            <span>Transport retrieved <b>{osmSummary.transportProvenance.fetchedAt ?? "Unknown"}</b> · {osmSummary.transportProvenance.cached ? "server cache" : "provider response"}</span>
+            <span>Transport provider {osmSummary.transportProvenance.endpoint ?? "Unknown"}</span>
+            {snapshotWarning(osmSummary.transportProvenance) && <span className="dataset-warning">{snapshotWarning(osmSummary.transportProvenance)}</span>}
+            {osmSummary.contextProvenance && <><span>Context snapshot <b>{osmSummary.contextProvenance.snapshotTimestamp ?? "Unknown"}</b> · retrieved {osmSummary.contextProvenance.fetchedAt ?? "Unknown"}</span>{snapshotWarning(osmSummary.contextProvenance) && <span className="dataset-warning">{snapshotWarning(osmSummary.contextProvenance)}</span>}</>}
             <span>Missing topology anchors <b>{osmSummary.missingTopologyWayCount}</b></span>
             <span>Fetch <b>{osmSummary.fetchMilliseconds.toFixed(0)} ms</b> · Adapter <b>{osmSummary.adapterMilliseconds.toFixed(1)} ms</b></span>
           </div>}
@@ -529,7 +544,7 @@ export function MapWorkspace() {
           <section className="scenario-section physarum-section" aria-label="Physarum controls">
             <div className="scenario-heading"><strong>Physarum runtime</strong><span className={physarum.runtime.status === "completed" ? "status-valid" : physarum.runtime.status === "error" ? "status-invalid" : ""}>{physarum.runtime.status}</span></div>
             <div className="runtime-actions">
-              {(physarum.runtime.status === "idle" || physarum.runtime.status === "completed" || physarum.runtime.status === "cancelled" || physarum.runtime.status === "error") && <button className="run-physarum" type="button" disabled={!prepared.network} onClick={() => prepared.network && physarum.start(prepared.network)}>Run</button>}
+              {(physarum.runtime.status === "idle" || physarum.runtime.status === "completed" || physarum.runtime.status === "cancelled" || physarum.runtime.status === "error") && <button className="run-physarum" type="button" disabled={!prepared.network || !analyzeReady} onClick={() => prepared.network && analyzeReady && physarum.start(prepared.network)}>Run</button>}
               {physarum.runtime.status === "running" && <button className="run-physarum" type="button" onClick={physarum.pause}>Pause</button>}
               {physarum.runtime.status === "paused" && <button className="run-physarum" type="button" onClick={physarum.resume}>Resume</button>}
               {(physarum.runtime.status === "running" || physarum.runtime.status === "paused" || physarum.runtime.status === "completed" || physarum.runtime.status === "error") && <button className="run-physarum reset-runtime" type="button" onClick={physarum.reset}>Reset runtime</button>}

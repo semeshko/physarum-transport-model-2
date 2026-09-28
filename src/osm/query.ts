@@ -31,10 +31,13 @@ export function createUrbanContextQuery(bounds: GISBounds): string {
 }
 
 /** Everything that can be said about a payload without knowing how it arrived. */
-export function validateOverpassPayload(payload: unknown, emptyMessage: string): unknown {
-  const root = payload !== null && typeof payload === "object" ? (payload as { elements?: unknown }) : null;
+export function validateOverpassPayload(payload: unknown, emptyMessage: string, allowEmpty = false): unknown {
+  const root = payload !== null && typeof payload === "object" ? (payload as { elements?: unknown; remark?: unknown }) : null;
   if (!root || !Array.isArray(root.elements)) throw new OSMRequestError("remote", "The OSM service returned malformed data.");
-  if (root.elements.length === 0) throw new OSMRequestError("empty", emptyMessage);
+  // Overpass may return HTTP 200 with partial elements and a runtime error.
+  // Never turn such an answer into a successful empty or complete dataset.
+  if (root.remark) throw new OSMRequestError("remote", "The OSM service reported an incomplete query. Retry this area.");
+  if (root.elements.length === 0 && !allowEmpty) throw new OSMRequestError("empty", emptyMessage);
   if (root.elements.length > OSM_AREA_LIMITS.maximumWays) throw new OSMRequestError("oversized", `The area returned more than ${OSM_AREA_LIMITS.maximumWays.toLocaleString()} ways. Select a smaller area.`);
   return payload;
 }
@@ -60,7 +63,7 @@ export function createQuery(kind: OSMQueryKind, bounds: GISBounds): string {
 }
 
 export function parseBoundsParameter(raw: string | null): GISBounds {
-  const parts = (raw ?? "").split(",").map((value) => Number.parseFloat(value.trim()));
+  const parts = (raw ?? "").split(",").map((value) => value.trim() ? Number(value) : Number.NaN);
   if (parts.length !== 4 || parts.some((value) => !Number.isFinite(value))) {
     throw new OSMRequestError("remote", "bbox must be four finite numbers: west,south,east,north.");
   }

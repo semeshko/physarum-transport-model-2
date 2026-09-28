@@ -67,7 +67,7 @@ export function overpassUrbanContextToGeoJSON(value: unknown): OSMUrbanContextRe
     const element = record(rawElement) as OverpassElement | null; const tags = element ? record(element.tags) : null;
     if (!element || element.type !== "way" || !Number.isSafeInteger(element.id) || !tags || !Array.isArray(element.geometry) || element.geometry.length < 2) { skippedElementCount += 1; continue; }
     const coordinates: [number, number][] = []; let valid = true;
-    for (const rawPoint of element.geometry) { const point = record(rawPoint); if (!point || typeof point.lat !== "number" || typeof point.lon !== "number") { valid = false; break; } coordinates.push([point.lon, point.lat]); }
+    for (const rawPoint of element.geometry) { const point = record(rawPoint); if (!point || typeof point.lat !== "number" || typeof point.lon !== "number" || !Number.isFinite(point.lat) || !Number.isFinite(point.lon) || Math.abs(point.lat) > 90 || Math.abs(point.lon) > 180) { valid = false; break; } coordinates.push([point.lon, point.lat]); }
     if (!valid) { skippedElementCount += 1; continue; }
     const closed = coordinates.length >= 4 && coordinates[0][0] === coordinates.at(-1)![0] && coordinates[0][1] === coordinates.at(-1)![1];
     const polygonTagged = Boolean(tags.building) || tags.natural === "water" || Boolean(tags.water) || tags.leisure === "park" || tags.natural === "wood" || Boolean(tags.landuse);

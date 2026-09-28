@@ -1,4 +1,6 @@
-import type { GISBounds } from "../gis/types";
+import type { GISBounds, GISDataAcquisition } from "../gis/types";
+
+export type OSMAcquisition = { readonly payload: unknown; readonly provenance: GISDataAcquisition };
 
 export type OverpassGeometryPoint = { readonly lat: number; readonly lon: number };
 export type OverpassElement = {
@@ -20,4 +22,7 @@ export type OSMImportSummary = {
   readonly urbanFeatureCount: number;
   readonly urbanPolygonCount: number;
   readonly urbanContextWarning: string | null;
+  readonly urbanStatus: "loaded" | "empty" | "partial" | "unavailable";
+  readonly transportProvenance: GISDataAcquisition;
+  readonly contextProvenance: GISDataAcquisition | null;
 };

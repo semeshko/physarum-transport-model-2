@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Map as MapLibreMap, MapMouseEvent, ProjectionSpecification } from "maplibre-gl";
 import { installLayerRegistry, syncLayerRegistry, type LayerRegistry } from "@/map/layer-registry";
 import type { GISBounds, GISPosition } from "@/gis/types";
+import { BASEMAP_STYLE, BASEMAP_ATTRIBUTION, cartoRequest } from "@/map/basemap";
 
 export type CameraCommand =
   | { id: number; type: "zoom-in" | "zoom-out" | "reset" | "capture-bounds" }
@@ -11,7 +12,7 @@ export type CameraCommand =
 export type MapFeatureSelection = { readonly kind: "node" | "edge"; readonly id: string };
 type Props = { cameraCommand: CameraCommand | null; projection: "mercator" | "globe"; registry: LayerRegistry; onFeatureSelect?: (selection: MapFeatureSelection) => void; onBoundsCaptured?: (bounds: GISBounds) => void; onMapClick?: (position: GISPosition) => void };
 const INITIAL_VIEW = { center: [24.0316, 49.8429] as [number, number], zoom: 12, bearing: 0, pitch: 0 };
-const BASEMAP_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+const CARTO_KEY = process.env.NEXT_PUBLIC_CARTO_API_KEY;
 /**
  * MapLibre 6 derives its Worker URL from its own `import.meta.url` and returns
  * an empty string when that is not an http(s) URL, which is what a bundler
@@ -62,13 +63,18 @@ export function MapCanvas({ cameraCommand, projection, registry, onFeatureSelect
         const maplibregl = await import("maplibre-gl");
         if (cancelled || !containerRef.current) return;
         if (!maplibregl.getWorkerUrl()) maplibregl.setWorkerUrl(new URL(MAPLIBRE_WORKER_URL, window.location.origin).href);
-        const map = new maplibregl.Map({ container: containerRef.current, style: BASEMAP_STYLE, ...INITIAL_VIEW, attributionControl: { compact: true } });
+        const map = new maplibregl.Map({
+          container: containerRef.current, style: BASEMAP_STYLE, ...INITIAL_VIEW,
+          transformRequest: (url) => cartoRequest(url, CARTO_KEY),
+          attributionControl: { compact: false, customAttribution: BASEMAP_ATTRIBUTION },
+        });
         mapRef.current = map;
         map.on("style.load", () => {
           if (cancelled) return;
           map.setProjection({ type: projectionRef.current });
           installLayerRegistry(map, registryRef.current);
           setIsLoading(false);
+          setError(null);
           if (loadingTimer) clearTimeout(loadingTimer);
         });
         map.on("click", (event: MapMouseEvent) => {
@@ -123,5 +129,5 @@ export function MapCanvas({ cameraCommand, projection, registry, onFeatureSelect
     }
   }, [cameraCommand]);
 
-  return <><div ref={containerRef} className="map-canvas" aria-label="Interactive map" />{isLoading && <div className="map-status">Loading map…</div>}{error && <div className="map-status" role="alert">{error}</div>}</>;
+  return <><div ref={containerRef} className="map-canvas" aria-label="Interactive map" />{isLoading && <div className="map-status">Loading map…</div>}{error && <div className="map-status" role="alert">{error}</div>}{!CARTO_KEY?.trim() && <div className="basemap-notice" role="status">CARTO access is not configured. Add your Basemaps key to NEXT_PUBLIC_CARTO_API_KEY in .env.local, then restart. <a href="https://carto.com/basemaps/apikey/" target="_blank" rel="noopener noreferrer">Get a CARTO key</a>. Map imagery is separate from Analyze data.</div>}</>;
 }

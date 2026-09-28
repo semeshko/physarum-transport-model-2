@@ -54,8 +54,11 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .runtime-actions .reset-runtime { border-color: rgba(248, 113, 113, 0.35); color: #fca5a5; }
 .map-status { position: absolute; z-index: 3; inset: 0; display: grid; place-items: center; padding: 1.5rem; background: var(--background); color: var(--muted); text-align: center; }
 .map-status[role="alert"] { color: #fecaca; }
+.basemap-notice { position: absolute; z-index: 4; right: 12px; bottom: 40px; max-width: min(360px, calc(100% - 24px)); padding: 10px; background: var(--background); border: 1px solid #8b7634; border-radius: 8px; color: #f4dc9c; font-size: 12px; }
+.basemap-notice a { text-decoration: underline; }
 @media (max-width: 640px) {
-  .map-panel { top: auto; right: max(0.75rem, env(safe-area-inset-right)); bottom: max(0.75rem, env(safe-area-inset-bottom)); left: max(0.75rem, env(safe-area-inset-left)); width: auto; max-height: min(70dvh, 34rem); padding: 0.8rem; }
+  .map-panel { top: auto; right: max(0.75rem, env(safe-area-inset-right)); bottom: max(2.5rem, env(safe-area-inset-bottom)); left: max(0.75rem, env(safe-area-inset-left)); width: auto; max-height: min(70dvh, 34rem); padding: 0.8rem; }
+  .basemap-notice { top: 8px; bottom: auto; }
   .map-panel p { display: none; }
   .control-row { margin-top: 0.65rem; }
   .projection-button { display: none; }

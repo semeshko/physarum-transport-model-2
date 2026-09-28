@@ -16,6 +16,35 @@ beforeEach(() => clearOverpassCache());
  * mirrors should not be hit on every `npm test`.
  */
 describe("server-side Overpass client", () => {
+  it("enforces a wall deadline even if the provider never resolves or honors cancellation", async () => {
+    vi.useFakeTimers();
+    try {
+      const signals: AbortSignal[] = [];
+      const transport = vi.fn<OverpassTransport>(async (_endpoint, _body, _timeout, signal) => { signals.push(signal!); return new Promise(() => {}); });
+      const pending = requestOverpass("context", bounds, { transport, timeoutMilliseconds: 100 });
+      const assertion = expect(pending).rejects.toMatchObject({ code: "timeout" });
+      await vi.advanceTimersByTimeAsync(300);
+      await assertion;
+      expect(transport).toHaveBeenCalledTimes(3);
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("caches a successful empty context with its original acquisition time", async () => {
+    const transport = vi.fn<OverpassTransport>(async () => respond(JSON.stringify({ elements: [] })));
+    const first = await requestOverpass("context", bounds, { transport });
+    const cached = await requestOverpass("context", bounds, { transport });
+    expect(first.elementCount).toBe(0);
+    expect(cached).toMatchObject({ cached: true, fetchedAt: first.fetchedAt });
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back after HTTP 200 with a runtime remark instead of caching partial data", async () => {
+    const transport = vi.fn<OverpassTransport>(async (endpoint) => respond(endpoint === OVERPASS_ENDPOINTS[0] ? JSON.stringify({ elements: [{ type: "way", id: 1 }], remark: "runtime error" }) : payload()));
+    const result = await requestOverpass("transport", bounds, { transport });
+    expect(result.endpoint).toBe(OVERPASS_ENDPOINTS[1]);
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
   it("lets the browser receive a third-mirror response after two provider timeouts", async () => {
     vi.useFakeTimers();
     try {
@@ -118,12 +147,15 @@ describe("server-side Overpass client", () => {
     expect(transport).not.toHaveBeenCalled();
   });
 
-  it("passes the caller signal to the provider transport", async () => {
+  it("cancels the provider attempt when the caller cancels", async () => {
     const controller = new AbortController();
     let seen: AbortSignal | undefined;
-    const transport: OverpassTransport = async (...arguments_) => { seen = arguments_[3]; return respond(payload()); };
-    await requestOverpass("transport", bounds, { transport, signal: controller.signal });
-    expect(seen).toBe(controller.signal);
+    const transport = vi.fn<OverpassTransport>(async (...arguments_) => { seen = arguments_[3]; return new Promise(() => {}); });
+    const pending = requestOverpass("transport", bounds, { transport, signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ code: "aborted" });
+    expect(seen?.aborted).toBe(true);
+    expect(transport).toHaveBeenCalledTimes(1);
   });
 
   it("reports an unreachable provider after exhausting every mirror", async () => {

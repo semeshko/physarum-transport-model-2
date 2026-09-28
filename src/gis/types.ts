@@ -45,9 +45,18 @@ export type GISFeature = {
   readonly lineTopology?: GISLineTopology;
 };
 
+export type GISDataAcquisition = {
+  readonly endpoint: string | null;
+  readonly fetchedAt: string | null;
+  readonly receivedAt: string;
+  readonly snapshotTimestamp: string | null;
+  readonly cached: boolean | null;
+};
+
 export type GISDatasetSource = {
   readonly kind: "bundled" | "file" | "osm";
   readonly name: string;
+  readonly acquisitions?: Readonly<Record<string, GISDataAcquisition>>;
 };
 
 export type GISDataset = {

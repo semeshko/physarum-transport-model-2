@@ -387,3 +387,82 @@ Validation after the timeout change: 467/467 tests in 35 files; targeted ESLint
 passed; `tsc --noEmit` passed; browser retry and the Analyze runs above passed.
 The earlier production build result belongs to the checkpoint; it was not rerun
 for this timeout-only change. No merge into `main` was performed.
+
+## 11. Basemap access and acquisition reliability — 2026-09-28
+
+This follow-up retains MapLibre and CARTO Dark Matter. No Design law, mesh,
+parameters or new scientific gate was introduced. The supplied OSIRIS audit
+was reference material, not authorization to replace the application.
+
+### Implemented and independently tested
+
+- `src/map/basemap.ts`, `basemap.test.ts`, `MapCanvas.tsx`: optional own
+  `NEXT_PUBLIC_CARTO_API_KEY` is added to HTTPS CARTO style/tile/glyph/sprite
+  requests only. Tests exclude unrelated and lookalike hosts. Explicit expanded
+  OSM/CARTO attribution and a missing-key warning were added. `.env.example`
+  contains no key; `.env.local` stays ignored. Official requirement checked at
+  https://carto.com/basemaps/apikey/. No account/key was created for the user.
+- `src/osm/query.ts`, `client.test.ts`, `server-client.test.ts`: before this
+  change a valid empty context was rejected, while HTTP-200 `remark` responses
+  could be accepted as complete. Now legitimate empty context is distinct from
+  provider failure; incomplete responses trigger fallback. Strict bbox parsing
+  rejects blank/partially numeric coordinates.
+- `src/osm/server-client.ts`: the earlier socket timeout did not impose an
+  overall attempt deadline. Each provider now has a wall-clock deadline and
+  cancellation, tested with a never-resolving injected transport. This supersedes
+  the socket-only limitation stated in section 10. Original acquisition time is
+  retained on cache hits and exposed by `src/app/api/osm/route.ts`.
+- `src/osm/acquisition.ts` and its tests: standard anchored transport adapter,
+  separate loaded/empty/partial/unavailable context, context-only retry,
+  cancellation even for late responses, snapshot warnings and acquisition
+  metadata. Dataset versions hash analytical features, context status and
+  snapshot dates; changing retrieval/cache metadata alone does not change them.
+  Basemap style/key is not part of analytical input. This is input versioning,
+  not a complete persisted scenario/archive feature.
+- `MapWorkspace.tsx`: displays provenance and uncertainty; permits explicit
+  transport-only Analyze with incomplete-context acknowledgement; retries context
+  without replacing transport from scratch; invalidates the old run when data
+  changes; blocks running the old dataset for newly selected bounds. Pending
+  acquisition is cancelled when changing area, mode or dataset. UI wiring is
+  type/build checked, but new interactions were not browser-accepted below.
+
+The new regression fixtures exercise provider errors and standard adapters;
+they are not proof of live geographic completeness. No scratch converter was
+used or new synthetic data substituted for live acceptance.
+
+### Live verification and remaining acceptance
+
+Local `http://localhost:3000/` returned HTTP 200. A standard local API request
+for west/south/east/north `24.018373,49.828850,24.028995,49.835654` returned:
+
+- transport HTTP 200, 476 elements;
+- provider `https://overpass-api.de/api/interpreter`;
+- OSM snapshot `2026-09-28T08:43:20Z`;
+- fetched at `2026-09-28T08:44:48.713Z`;
+- the separate context request failed with HTTP 502. Therefore reliable live
+  building/water acquisition is **not fully accepted**. Failure was not replaced
+  with an empty or synthetic dataset. Counts may change as OSM changes.
+
+Production build and TypeScript passed. New OSM/basemap regression tests passed.
+The full suite passed 489/489 tests in 37 files. One subsequently added strict
+bbox regression also passed in a rerun of all 18 client tests (490 tests total
+now present; the entire suite was not rerun for that test-only addition).
+TypeScript was rechecked after the final mobile-warning markup change. Lint has only the existing
+nine scratch warnings, no errors.
+
+The browser tool encountered its error-page navigation policy block even though
+the local HTTP check passed. No bypass was attempted. New desktop/mobile layout,
+attribution visibility, retry/acknowledgement interaction and keyed CARTO requests
+remain **not visually verified** in this follow-up. Section 10 remains evidence
+only for its earlier tested revision. An actual user-owned CARTO key is still
+required to accept authenticated access; a blank example is not configuration.
+
+Manual follow-up: configure the key and restart dev; check visible attribution;
+select the above small area and **Load OSM network**; inspect separate timestamps
+and context status. On failure use **Retry urban context**, or explicitly check
+**Analyze with incomplete urban context** for a limited transport-only run.
+Then repeat section 10's Pedestrian/Motor terminals, **Run**, **Reset runtime**,
+and **Clear scenario**. Select a different area and verify **Run** stays disabled
+until its data loads. Context imports remain way-only; relation-only polygons,
+one-way/turn-restriction correctness, full scenario persistence, Design and Gates
+D–H are not newly accepted by this work.

@@ -34,6 +34,7 @@ export async function GET(request: Request) {
         "X-OSM-Elements": String(result.elementCount),
         "X-OSM-Elapsed-Ms": String(result.elapsedMilliseconds),
         "X-OSM-Cached": String(result.cached),
+        "X-OSM-Fetched-At": result.fetchedAt,
       },
     });
   } catch (error) {

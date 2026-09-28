@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { measureOSMArea, validateOSMArea } from "./area";
 import { createOverpassQuery, createUrbanContextQuery, fetchOSMTransport, fetchOSMUrbanContext, OSMRequestError } from "./client";
 import type { GISBounds } from "../gis/types";
+import { parseBoundsParameter } from "./query";
 
 const bounds: GISBounds = [24.0241, 49.8398, 24.0391, 49.846];
 const oversized: GISBounds = [24, 49.8, 24.2, 49.95];
@@ -11,6 +12,11 @@ const ok = (payload: unknown) => ({ ok: true, status: 200, json: async () => pay
 const fail = (status: number, body: unknown) => ({ ok: false, status, json: async () => body }) as unknown as Response;
 
 describe("OSM query construction", () => {
+  it("rejects blank or partially numeric bbox coordinates", () => {
+    expect(() => parseBoundsParameter("24,,25,50")).toThrow();
+    expect(() => parseBoundsParameter("24junk,49,25,50")).toThrow();
+    expect(parseBoundsParameter("24,49,25,50")).toEqual([24,49,25,50]);
+  });
   it("builds a bounded geometry query for supported highways", () => {
     const query = createOverpassQuery(bounds);
     expect(query).toContain('way["highway"');
@@ -40,6 +46,12 @@ describe("OSM query construction", () => {
  * asserts that the client's only correspondent is this app's own route.
  */
 describe("browser OSM client", () => {
+  it("accepts successful empty context but not a provider runtime error disguised as HTTP 200", async () => {
+    await expect(fetchOSMUrbanContext(bounds, { fetchImplementation: vi.fn(async () => ok({ elements: [] })) })).resolves.toEqual({ elements: [] });
+    for (const elements of [[], [{ type: "way", id: 1 }]]) {
+      await expect(fetchOSMUrbanContext(bounds, { fetchImplementation: vi.fn(async () => ok({ elements, remark: "runtime error: Query timed out" })) })).rejects.toMatchObject({ code: "remote" });
+    }
+  });
   it("requests this application's route, not a public Overpass instance", async () => {
     const fetchImplementation = vi.fn(async () => ok({ elements: [{ type: "way", id: 1 }] }));
     await fetchOSMTransport(bounds, { fetchImplementation });

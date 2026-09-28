@@ -132,7 +132,26 @@ export type OverpassRequestOptions = {
   readonly transport?: OverpassTransport;
 };
 
-export type OverpassResult = { readonly payload: unknown; readonly endpoint: string; readonly elapsedMilliseconds: number; readonly bytes: number; readonly elementCount: number };
+export type OverpassResult = { readonly payload: unknown; readonly endpoint: string; readonly fetchedAt: string; readonly elapsedMilliseconds: number; readonly bytes: number; readonly elementCount: number };
+
+/** A wall-clock deadline includes DNS, connection setup and a trickling body. */
+async function providerAttempt(transport: OverpassTransport, endpoint: string, body: string, timeout: number, signal?: AbortSignal): Promise<RawResponse> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let rejectCancelled: (error: OSMRequestError) => void = () => {};
+  const cancelled = new Promise<never>((_resolve, reject) => { rejectCancelled = reject; });
+  const stop = (error: OSMRequestError) => { rejectCancelled(error); controller.abort(); };
+  const abort = () => stop(new OSMRequestError("aborted", "The previous OSM request was cancelled."));
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    if (signal?.aborted) { abort(); return await cancelled; }
+    timer = setTimeout(() => stop(new OSMRequestError("timeout", "The OSM provider exceeded its time limit.")), timeout);
+    return await Promise.race([transport(endpoint, body, timeout, controller.signal), cancelled]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+  }
+}
 
 /**
  * Small server-side cache.
@@ -161,16 +180,20 @@ export async function requestOverpass(kind: OSMQueryKind, bounds: GISBounds, opt
   let lastFailure: OSMRequestError | null = null;
 
   for (const endpoint of OVERPASS_ENDPOINTS) {
+    if (options.signal?.aborted) throw new OSMRequestError("aborted", "The previous OSM request was cancelled.");
     const started = Date.now();
     try {
-      const response = await transport(endpoint, body, timeout, options.signal);
+      const response = await providerAttempt(transport, endpoint, body, timeout, options.signal);
+      if (options.signal?.aborted) throw new OSMRequestError("aborted", "The previous OSM request was cancelled.");
+      if (response.status >= 400) throw classifyOverpassStatus(response.status);
       let parsed: unknown;
       try { parsed = JSON.parse(response.body); }
       catch { throw new OSMRequestError("remote", "The OSM service returned an unexpected response format."); }
-      const payload = validateOverpassPayload(parsed, OSM_EMPTY_MESSAGES[kind]);
+      const payload = validateOverpassPayload(parsed, OSM_EMPTY_MESSAGES[kind], kind === "context");
       const result: OverpassResult = {
         payload,
         endpoint,
+        fetchedAt: new Date().toISOString(),
         elapsedMilliseconds: Date.now() - started,
         bytes: Buffer.byteLength(response.body),
         elementCount: (payload as { elements: unknown[] }).elements.length,

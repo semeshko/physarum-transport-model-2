@@ -1,6 +1,7 @@
 import type { GISBounds } from "../gis/types";
 import { OSMRequestError, validateOverpassPayload, OSM_EMPTY_MESSAGES, type OSMQueryKind } from "./query";
 import { validateOSMArea } from "./area";
+import type { OSMAcquisition } from "./types";
 
 export { OSMRequestError, createOverpassQuery, createUrbanContextQuery } from "./query";
 
@@ -19,7 +20,7 @@ export const OSM_REQUEST_TIMEOUT_MILLISECONDS = 80_000;
 
 type RequestOptions = { readonly signal?: AbortSignal; readonly fetchImplementation?: typeof fetch; readonly timeoutMilliseconds?: number };
 
-async function fetchViaServer(kind: OSMQueryKind, bounds: GISBounds, options: RequestOptions): Promise<unknown> {
+export async function fetchOSMAcquisition(kind: OSMQueryKind, bounds: GISBounds, options: RequestOptions = {}): Promise<OSMAcquisition> {
   // Refuse an oversized viewport here rather than spending a round trip and a
   // volunteer-run Overpass slot to be told the same thing.
   validateOSMArea(bounds);
@@ -36,7 +37,15 @@ async function fetchViaServer(kind: OSMQueryKind, bounds: GISBounds, options: Re
       const detail = await response.json().catch(() => null) as { error?: string; code?: OSMRequestError["code"] } | null;
       throw new OSMRequestError(detail?.code ?? "remote", detail?.error ?? `The OSM service rejected the request (${response.status}).`);
     }
-    return validateOverpassPayload(await response.json(), OSM_EMPTY_MESSAGES[kind]);
+    const payload = validateOverpassPayload(await response.json(), OSM_EMPTY_MESSAGES[kind], kind === "context");
+    const timestamp = (payload as { osm3s?: { timestamp_osm_base?: unknown } }).osm3s?.timestamp_osm_base;
+    const header = (name: string) => response.headers?.get(name) ?? null;
+    return { payload, provenance: {
+      endpoint: header("X-OSM-Endpoint"), fetchedAt: header("X-OSM-Fetched-At"),
+      receivedAt: new Date().toISOString(),
+      snapshotTimestamp: typeof timestamp === "string" && Number.isFinite(Date.parse(timestamp)) ? timestamp : null,
+      cached: header("X-OSM-Cached") === null ? null : header("X-OSM-Cached") === "true",
+    } };
   } catch (error) {
     if (error instanceof OSMRequestError) throw error;
     if (controller.signal.aborted) {
@@ -50,5 +59,5 @@ async function fetchViaServer(kind: OSMQueryKind, bounds: GISBounds, options: Re
   }
 }
 
-export async function fetchOSMTransport(bounds: GISBounds, options: RequestOptions = {}): Promise<unknown> { return fetchViaServer("transport", bounds, options); }
-export async function fetchOSMUrbanContext(bounds: GISBounds, options: RequestOptions = {}): Promise<unknown> { return fetchViaServer("context", bounds, options); }
+export async function fetchOSMTransport(bounds: GISBounds, options: RequestOptions = {}): Promise<unknown> { return (await fetchOSMAcquisition("transport", bounds, options)).payload; }
+export async function fetchOSMUrbanContext(bounds: GISBounds, options: RequestOptions = {}): Promise<unknown> { return (await fetchOSMAcquisition("context", bounds, options)).payload; }
